@@ -2,645 +2,817 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Contractor Payout Reconciliation</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Contractor Ledger & Crypto Reconciliation</title>
     <style>
-        .spinner {
-            border: 2px solid rgba(255,255,255,0.3);
-            border-radius: 50%;
-            border-top-color: #fff;
-            width: 1rem;
-            height: 1rem;
-            animation: spin 0.8s linear infinite;
-            display: inline-block;
-            vertical-align: middle;
+        :root {
+            --bg-main: #f8fafc;
+            --card-bg: #ffffff;
+            --border-color: #e2e8f0;
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --danger: #ef4444;
+            --danger-hover: #dc2626;
+            --success: #16a34a;
+            --warning: #d97706;
         }
-        @keyframes spin {
-            to { transform: rotate(360deg); }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            margin: 0;
+            padding: 24px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            background: var(--card-bg);
+            padding: 20px 24px;
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 22px;
+            font-weight: 700;
+        }
+
+        .week-selector {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 360px 1fr;
+            gap: 24px;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card h2, .card h3 {
+            margin-top: 0;
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 14px;
+            color: var(--text-main);
+        }
+
+        .form-group {
+            margin-bottom: 14px;
+        }
+
+        label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: var(--text-muted);
+        }
+
+        input[type="text"], input[type="file"], select, textarea {
+            width: 100%;
+            padding: 9px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 14px;
+            box-sizing: border-box;
+            background: #fff;
+            color: var(--text-main);
+        }
+
+        input[type="checkbox"] {
+            cursor: pointer;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: normal;
+            color: var(--text-main);
+            cursor: pointer;
+        }
+
+        .btn {
+            background: var(--primary);
+            color: #fff;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 13px;
+            cursor: pointer;
+            width: 100%;
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn:hover { background: var(--primary-hover); }
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        .btn-danger {
+            background: var(--danger);
+        }
+        .btn-danger:hover { background: var(--danger-hover); }
+
+        .btn-secondary {
+            background: #f1f5f9;
+            color: #334155;
+            border: 1px solid #cbd5e1;
+        }
+        .btn-secondary:hover { background: #e2e8f0; }
+
+        .btn-sm {
+            padding: 6px 10px;
+            font-size: 12px;
+            width: auto;
+        }
+
+        .table-container {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+            text-align: left;
+        }
+
+        th, td {
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            background: #f8fafc;
+            color: var(--text-muted);
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        tr:hover {
+            background: #fafafa;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .badge-unpaid { background: #fee2e2; color: #991b1b; }
+        .badge-paid { background: #dcfce7; color: #166534; }
+        .badge-manual { background: #fef3c7; color: #92400e; }
+
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(15, 23, 42, 0.5);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal {
+            background: #fff;
+            border-radius: 10px;
+            padding: 24px;
+            width: 100%;
+            max-width: 550px;
+            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .modal-header h3 { margin: 0; }
+
+        .mapping-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .flex-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        .contractor-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #f1f5f9;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin: 2px;
+        }
+
+        .contractor-tag span {
+            cursor: pointer;
+            color: var(--danger);
+            font-weight: bold;
+        }
+
+        .teams-bar {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+            align-items: center;
+        }
+
+        .team-chip {
+            background: #e2e8f0;
+            border: none;
+            padding: 5px 12px;
+            border-radius: 16px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            color: #334155;
+        }
+
+        .team-chip:hover {
+            background: #cbd5e1;
         }
     </style>
 </head>
-<body class="bg-gray-900 text-gray-100 p-8">
-    <div class="max-w-6xl mx-auto space-y-8">
-        <h1 class="text-3xl font-bold border-b border-gray-700 pb-4">Weekly Contractor Payout Portal</h1>
+<body>
 
-        <!-- 1. File Upload Section -->
-        <div class="bg-gray-800 p-6 rounded-lg border border-gray-700">
-            <h2 class="text-xl font-semibold mb-4 text-blue-400">1. Upload Weekly Screenshot</h2>
-            <form id="uploadForm" class="flex flex-wrap items-center gap-4">
-                <div class="flex items-center gap-2">
-                    <label class="text-xs text-gray-400">Start Date:</label>
-                    <input type="date" id="startDate" required class="bg-gray-700 p-2 rounded text-white border border-gray-600 text-sm">
-                </div>
-                <div class="flex items-center gap-2">
-                    <label class="text-xs text-gray-400">End Date:</label>
-                    <input type="date" id="endDate" required class="bg-gray-700 p-2 rounded text-white border border-gray-600 text-sm">
-                </div>
-                <input type="file" id="imageFile" accept="image/*" required class="text-sm">
-                
-                <div class="flex items-center gap-2 bg-gray-750 px-3 py-2 rounded border border-gray-600">
-                    <input type="checkbox" id="overwriteCheck" class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-600 cursor-pointer">
-                    <label for="overwriteCheck" class="text-xs text-gray-300 cursor-pointer font-medium">Overwrite if week exists</label>
-                </div>
-
-                <button type="submit" id="btnUpload" class="bg-blue-600 hover:bg-blue-500 px-5 py-2 rounded text-sm font-semibold transition-all flex items-center gap-2">
-                    <span>Upload & Parse</span>
-                </button>
-            </form>
+<div class="container">
+    <!-- Top Header -->
+    <div class="header">
+        <div>
+            <h1>Weekly Contractor Ledger</h1>
+            <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">
+                Reconciliation & Payment Verification Engine
+            </div>
         </div>
 
-        <!-- Delete Contractor / Wrong Names Manager -->
-        <div class="bg-gray-800 p-6 rounded-lg border border-gray-700 space-y-4">
-            <div class="flex items-center justify-between border-b border-gray-700 pb-3">
-                <h2 class="text-xl font-semibold text-amber-400 flex items-center gap-2">
-                    <span>👤</span> Contractor Name Database Manager
-                </h2>
-                <input type="text" id="contractorFilter" onkeyup="filterContractors()" placeholder="Filter contractors..." class="bg-gray-700 px-3 py-1 rounded text-xs border border-gray-600 w-48 text-white">
+        <div class="week-selector">
+            <label for="weekSelect" style="margin: 0;">Week Range:</label>
+            <select id="weekSelect" style="width: auto;" onchange="changeWeek(this.value)">
+                {% for w in weeks %}
+                    <option value="{{ w }}" {% if w == selected_week %}selected{% endif %}>{{ w }}</option>
+                {% endfor %}
+            </select>
+            {% if selected_week %}
+                <button class="btn btn-danger btn-sm" onclick="deleteCurrentWeek()">Delete Week</button>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="grid">
+        <!-- Sidebar Controls -->
+        <div>
+            <!-- Image Upload Card -->
+            <div class="card">
+                <h2>Upload Ledger Image</h2>
+                <form id="uploadForm" onsubmit="handleImageUpload(event)">
+                    <div class="form-group">
+                        <label for="uploadWeekDate">Week Range Label</label>
+                        <input type="text" id="uploadWeekDate" placeholder="e.g. Aug 24 - Aug 30, 2026" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="ledgerFile">Ledger Image File</label>
+                        <input type="file" id="ledgerFile" accept="image/*" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="overwriteWeek">
+                            Overwrite if week already exists
+                        </label>
+                    </div>
+                    <button type="submit" class="btn" id="btnUpload">Upload & Parse Image</button>
+                </form>
             </div>
 
-            <div class="max-h-40 overflow-y-auto pr-2 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2" id="contractorListGrid">
-                {% for c in contractors %}
-                <div class="contractor-item bg-gray-900 border border-gray-700 p-2 rounded flex items-center justify-between gap-2" data-name="{{ c.name }}">
-                    <span class="text-sm font-mono text-gray-200 truncate">{{ c.name }}</span>
-                    <button type="button" onclick="deleteContractor({{ c.id }}, '{{ c.name }}')" class="bg-red-800 hover:bg-red-600 text-white text-xs px-2 py-1 rounded font-bold transition-all shrink-0">
-                        Delete
-                    </button>
+            <!-- Crypto Payment Reconciliation -->
+            <div class="card">
+                <h2>Crypto Reconciliation</h2>
+                <div class="form-group">
+                    <label for="cryptoSymbol">Cryptocurrency</label>
+                    <select id="cryptoSymbol">
+                        <option value="LTC" selected>Litecoin (LTC)</option>
+                        <option value="BTC">Bitcoin (BTC)</option>
+                        <option value="ETH">Ethereum (ETH)</option>
+                    </select>
                 </div>
-                {% else %}
-                <p class="text-xs text-gray-500 col-span-3">No contractors in database.</p>
+                <div class="form-group">
+                    <label for="txId">Transaction Hash (TxID)</label>
+                    <input type="text" id="txId" placeholder="Paste 0x... or 64-char hash">
+                </div>
+                <button class="btn" id="btnReconcile" onclick="reconcileCrypto()">Verify Blockchain Tx</button>
+            </div>
+
+            <!-- Manual Payment Card -->
+            <div class="card">
+                <h2>Manual Payment</h2>
+                <div class="form-group">
+                    <label for="manualNotes">Payment Notes (Optional)</label>
+                    <input type="text" id="manualNotes" placeholder="e.g. Cash / Bank Wire">
+                </div>
+                <button class="btn btn-secondary" id="btnManualPaid" onclick="markPaidManual()">Mark Selected as Manually Paid</button>
+            </div>
+
+            <!-- Team & Contractor Management -->
+            <div class="card">
+                <h2>Team Management</h2>
+                <button class="btn btn-secondary" onclick="openModal('teamModal')">+ Create New Team</button>
+                <div style="margin-top: 14px;">
+                    <button class="btn btn-secondary btn-sm" onclick="openModal('contractorModal')">Manage Contractors</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content Table Area -->
+        <div class="card">
+            <div class="teams-bar">
+                <span style="font-size: 12px; font-weight: 600; color: var(--text-muted);">Quick Select Team:</span>
+                <button class="team-chip" onclick="selectAllLedgers(true)">Select All</button>
+                <button class="team-chip" onclick="selectAllLedgers(false)">Deselect All</button>
+                {% for team in teams %}
+                    <button class="team-chip" onclick="selectTeamMembers('{{ team.name }}')">{{ team.name }}</button>
+                {% endfor %}
+            </div>
+
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 36px;">
+                                <input type="checkbox" id="masterCheckbox" onclick="toggleAllCheckboxes(this)">
+                            </th>
+                            <th>ID</th>
+                            <th>Contractor</th>
+                            <th>Amount (USD)</th>
+                            <th>Status</th>
+                            <th>Paid At (EST)</th>
+                            <th>Tx Hash / Symbol</th>
+                            <th>Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if ledgers %}
+                            {% for item in ledgers %}
+                            <tr>
+                                <td>
+                                    {% if 'PAID' not in item.status.upper() %}
+                                        <input type="checkbox" class="ledger-cb" value="{{ item.id }}" data-contractor="{{ item.contractor | lower }}">
+                                    {% endif %}
+                                </td>
+                                <td>{{ item.id }}</td>
+                                <td><strong>{{ item.contractor }}</strong></td>
+                                <td>${{ "%.2f"|format(item.amount_owed_usd) }}</td>
+                                <td>
+                                    {% if item.status == 'PAID' %}
+                                        <span class="badge badge-paid">PAID</span>
+                                    {% elif item.status == 'MANUALLY_PAID' %}
+                                        <span class="badge badge-manual">MANUAL</span>
+                                    {% else %}
+                                        <span class="badge badge-unpaid">UNPAID</span>
+                                    {% endif %}
+                                </td>
+                                <td style="font-size: 12px; color: var(--text-muted);">
+                                    {{ item.paid_at_est or '-' }}
+                                </td>
+                                <td style="font-size: 12px;">
+                                    {% if item.crypto_tx_id %}
+                                        <code>{{ item.crypto_symbol }}: {{ item.crypto_tx_id[:10] }}...</code>
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
+                                <td style="font-size: 12px; color: var(--text-muted);">
+                                    {{ item.notes or '-' }}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 30px;">
+                                    No ledger entries found for this week.
+                                </td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Unknown Contractor Approval -->
+<div class="modal-overlay" id="approvalModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3>Unknown Contractors Detected</h3>
+            <button class="btn btn-secondary btn-sm" onclick="closeModal('approvalModal')">✕</button>
+        </div>
+        <p style="font-size: 13px; color: var(--text-muted);">
+            The OCR parser identified names not currently in your contractor database. Map typos to existing contractors or leave as-is to add them.
+        </p>
+        <div id="mappingContainer"></div>
+        <div class="flex-actions">
+            <button class="btn" onclick="submitConfirmedUpload()">Confirm & Import Ledger</button>
+            <button class="btn btn-secondary" onclick="closeModal('approvalModal')">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Create Team -->
+<div class="modal-overlay" id="teamModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3>Create New Team</h3>
+            <button class="btn btn-secondary btn-sm" onclick="closeModal('teamModal')">✕</button>
+        </div>
+        <div class="form-group">
+            <label for="teamName">Team Name</label>
+            <input type="text" id="teamName" placeholder="e.g. Night Shift / Devs">
+        </div>
+        <div class="form-group">
+            <label>Select Contractors for Team</label>
+            <div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); padding: 10px; border-radius: 6px;">
+                {% for c in contractors %}
+                    <label class="checkbox-label" style="margin-bottom: 6px;">
+                        <input type="checkbox" class="team-contractor-cb" value="{{ c.name }}">
+                        {{ c.name }}
+                    </label>
                 {% endfor %}
             </div>
         </div>
-
-        <!-- 2. Dedicated Delete Manager Section -->
-        <div class="bg-red-950/30 p-6 rounded-lg border border-red-800/60 space-y-4">
-            <h2 class="text-xl font-semibold text-red-400 flex items-center gap-2">
-                <span>🗑️</span> Delete Week Data
-            </h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div class="bg-gray-800/80 p-4 rounded border border-gray-700 flex flex-col justify-between space-y-3">
-                    <div>
-                        <span class="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Option A: Delete Focused Week</span>
-                        <p class="text-xs text-gray-300">Deletes entries for the week currently chosen in the dropdown filter below.</p>
-                    </div>
-                    <div class="flex items-center justify-between gap-2 bg-gray-900 p-2 rounded border border-gray-700">
-                        <span class="text-sm font-mono text-blue-300 font-bold truncate">
-                            {{ selected_week or 'No Week Selected' }}
-                        </span>
-                        {% if selected_week %}
-                        <button id="btnDeleteSelected" onclick="deleteWeekByString('{{ selected_week }}', 'btnDeleteSelected')" class="bg-red-700 hover:bg-red-600 text-white text-xs px-3 py-2 rounded font-bold transition-all shrink-0 flex items-center gap-2">
-                            <span>Delete Selected</span>
-                        </button>
-                        {% endif %}
-                    </div>
-                </div>
-
-                <div class="bg-gray-800/80 p-4 rounded border border-gray-700 flex flex-col justify-between space-y-3">
-                    <div>
-                        <span class="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Option B: Select Date Range to Delete</span>
-                        <p class="text-xs text-gray-300">Pick a Start and End date matching the week range you wish to clear.</p>
-                    </div>
-                    <div class="flex flex-wrap items-center gap-2 bg-gray-900 p-2 rounded border border-gray-700">
-                        <input type="date" id="delStartDate" class="bg-gray-700 p-1.5 rounded text-white border border-gray-600 text-xs">
-                        <span class="text-xs text-gray-400">to</span>
-                        <input type="date" id="delEndDate" class="bg-gray-700 p-1.5 rounded text-white border border-gray-600 text-xs">
-                        <button id="btnDeleteRange" onclick="deleteWeekByRange()" class="bg-red-700 hover:bg-red-600 text-white text-xs px-3 py-2 rounded font-bold transition-all shrink-0 flex items-center gap-2 ml-auto">
-                            <span>Delete Range</span>
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- 3. Create Team Group Section -->
-        <div class="bg-gray-800 p-6 rounded-lg border border-gray-700 space-y-4">
-            <h2 class="text-xl font-semibold">3. Create Team Group</h2>
-            <div class="flex flex-wrap gap-4 items-start">
-                <div>
-                    <label class="block text-xs text-gray-400 mb-1">Team Name:</label>
-                    <input type="text" id="teamName" placeholder="e.g. Team Alpha" class="bg-gray-700 p-2 rounded text-sm border border-gray-600 w-64">
-                </div>
-
-                <div>
-                    <label class="block text-xs text-gray-400 mb-1">Select Contractors (Hold Ctrl/Cmd):</label>
-                    <select id="teamMembers" multiple class="bg-gray-700 p-2 rounded text-sm border border-gray-600 w-80 h-28 text-white">
-                        {% for c in contractors %}
-                            <option value="{{ c.name }}">{{ c.name }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-
-                <button id="btnCreateTeam" onclick="createTeam()" class="bg-indigo-600 px-4 py-2 rounded text-sm hover:bg-indigo-500 self-end mb-1 font-semibold transition-all flex items-center gap-2">
-                    <span>Create Team</span>
-                </button>
-            </div>
-            {% if teams_map %}
-            <div class="text-xs text-gray-400 mt-2 space-y-1">
-                <strong>Saved Teams:</strong> 
-                <div class="flex flex-wrap gap-2 mt-1">
-                    {% for team_name, members in teams_map.items() %}
-                        <span class="inline-block bg-indigo-950 border border-indigo-700/60 px-2.5 py-1 rounded text-indigo-300 font-medium">
-                            {{ team_name }} <span class="text-gray-400">({{ members|length }} members)</span>
-                        </span>
-                    {% endfor %}
-                </div>
-            </div>
-            {% endif %}
-        </div>
-
-        <!-- 4. Week Selection Focus Bar -->
-        <div class="flex items-center justify-between bg-gray-800 p-4 rounded-lg border border-gray-700">
-            <div class="flex items-center gap-3">
-                <label class="font-semibold text-lg text-white">Focus Week Range:</label>
-                <select id="weekSelect" onchange="window.location.href='/?selected_week=' + encodeURIComponent(this.value)" class="bg-gray-700 text-blue-400 font-mono font-semibold p-2 rounded border border-gray-600 text-sm cursor-pointer">
-                    {% if not weeks %}
-                        <option value="">No Uploaded Weeks Available</option>
-                    {% endif %}
-                    {% for w in weeks %}
-                        <option value="{{ w }}" {% if w == selected_week %}selected{% endif %}>{{ w }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            {% if selected_week %}
-            <span class="text-xs text-gray-400">Showing <strong class="text-white">{{ ledgers|length }}</strong> contractor entries for <span class="text-blue-300 font-mono">{{ selected_week }}</span></span>
-            {% endif %}
-        </div>
-
-        <!-- 5. Reconciliation & Real-Time Team Selection Bar -->
-        <div class="bg-gray-800 p-6 rounded-lg border border-gray-700 space-y-4">
-            <div class="flex items-center justify-between border-b border-gray-700 pb-3 flex-wrap gap-2">
-                <h2 class="text-xl font-semibold">5. Reconcile Ledger Items</h2>
-                
-                {% if teams_map %}
-                <div class="flex items-center gap-2 flex-wrap">
-                    <span class="text-xs font-semibold text-gray-400 uppercase">⚡ 1-Click Team Select:</span>
-                    {% for team_name, members in teams_map.items() %}
-                        <button type="button" onclick="selectTeam('{{ team_name }}')" class="bg-indigo-900/80 hover:bg-indigo-700 border border-indigo-500/50 text-indigo-200 text-xs px-3 py-1.5 rounded-full font-semibold transition-all">
-                            Select {{ team_name }}
-                        </button>
-                    {% endfor %}
-                </div>
-                {% endif %}
-            </div>
-
-            <div class="flex flex-wrap gap-4 items-center pt-2">
-                <p class="font-medium text-lg">Total Owed: <span id="selectedSum" class="text-green-400 font-bold">$0.00</span></p>
-
-                <div class="flex items-center gap-2">
-                    <input type="text" id="txId" placeholder="Crypto TxID / Hash" class="bg-gray-700 p-2 rounded text-sm w-64 border border-gray-600">
-                    <select id="cryptoSymbol" class="bg-gray-700 p-2 rounded text-sm border border-gray-600">
-                        <option value="ETH">ETH</option>
-                        <option value="BTC">BTC</option>
-                        <option value="LTC">LTC</option>
-                    </select>
-                    <button id="btnReconcile" onclick="reconcileCrypto()" class="bg-emerald-600 px-4 py-2 rounded text-sm hover:bg-emerald-500 font-semibold transition-all flex items-center gap-2">
-                        <span>Verify & Pay Batch</span>
-                    </button>
-                </div>
-
-                <div class="border-l border-gray-600 h-8 mx-2"></div>
-
-                <div class="flex items-center gap-2">
-                    <input type="text" id="manualNotes" placeholder="Optional Notes" class="bg-gray-700 p-2 rounded text-sm border border-gray-600">
-                    <button id="btnMarkManual" onclick="markManual()" class="bg-amber-600 px-4 py-2 rounded text-sm hover:bg-amber-500 font-semibold transition-all flex items-center gap-2">
-                        <span>Mark Paid Manually</span>
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Ledger Table -->
-        <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-            <table class="w-full text-left text-sm">
-                <thead class="bg-gray-700 text-gray-300">
-                    <tr>
-                        <th class="p-3"><input type="checkbox" onclick="toggleSelectAll(this)"></th>
-                        <th class="p-3">Week Range</th>
-                        <th class="p-3">Contractor</th>
-                        <th class="p-3">Owed (USD)</th>
-                        <th class="p-3">Status</th>
-                        <th class="p-3">Paid Date (EST)</th>
-                        <th class="p-3">TxID / Notes</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for row in ledgers %}
-                    <tr class="border-b border-gray-700 hover:bg-gray-750">
-                        <td class="p-3">
-                            {% if row.status == 'UNPAID' %}
-                            <input type="checkbox" class="row-checkbox" value="{{ row.id }}" data-amount="{{ row.amount_owed_usd }}" data-contractor="{{ row.contractor }}" onclick="updateSum()">
-                            {% endif %}
-                        </td>
-                        <td class="p-3 font-mono text-xs text-blue-300">{{ row.week_date }}</td>
-                        <td class="p-3 font-semibold">{{ row.contractor }}</td>
-                        <td class="p-3 text-green-400">${{ "%.2f"|format(row.amount_owed_usd) }}</td>
-                        <td class="p-3">
-                            <span class="px-2 py-1 rounded text-xs font-bold 
-                                {% if row.status == 'UNPAID' %}bg-red-900 text-red-300
-                                {% elif row.status == 'PAID' %}bg-green-900 text-green-300
-                                {% else %}bg-amber-900 text-amber-300{% endif %}">
-                                {{ row.status }}
-                            </span>
-                        </td>
-                        <td class="p-3 text-xs text-gray-400">{{ row.paid_at_est or '-' }}</td>
-                        <td class="p-3 text-xs font-mono truncate max-w-xs">{{ row.crypto_tx_id or row.notes or '-' }}</td>
-                    </tr>
-                    {% else %}
-                    <tr>
-                        <td colspan="7" class="p-6 text-center text-gray-500">No ledger records found for this week.</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+        <div class="flex-actions">
+            <button class="btn" onclick="submitCreateTeam()">Save Team</button>
+            <button class="btn btn-secondary" onclick="closeModal('teamModal')">Cancel</button>
         </div>
     </div>
+</div>
 
-    <!-- Approval Modal for Unrecognized Contractor Names -->
-    <div id="approvalModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-        <div class="bg-gray-800 border border-gray-700 max-w-2xl w-full p-6 rounded-lg space-y-6 shadow-2xl">
-            <div class="border-b border-gray-700 pb-3 flex justify-between items-center">
-                <h3 class="text-xl font-bold text-amber-400 flex items-center gap-2">
-                    <span>⚠️</span> Approval Required: New Contractor Names
-                </h3>
-                <button type="button" onclick="closeApprovalModal()" class="text-gray-400 hover:text-white font-bold">&times;</button>
-            </div>
-
-            <p class="text-xs text-gray-300">
-                The image upload detected names not currently in your database. You can approve them as new contractors or correct any OCR typos by picking an existing name or entering a manual correction.
-            </p>
-
-            <div id="approvalRowsContainer" class="space-y-4 max-h-80 overflow-y-auto pr-2">
-                <!-- Dynamic Approval Rows Inserted Here -->
-            </div>
-
-            <div class="flex justify-end gap-3 pt-4 border-t border-gray-700">
-                <button type="button" onclick="closeApprovalModal()" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-xs rounded font-semibold text-gray-300">
-                    Cancel Upload
-                </button>
-                <button type="button" id="btnConfirmApproval" onclick="submitApprovedMappings()" class="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-xs rounded font-semibold text-white flex items-center gap-2">
-                    <span>Confirm & Save Payouts</span>
-                </button>
-            </div>
+<!-- Modal: Manage Contractors -->
+<div class="modal-overlay" id="contractorModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3>Existing Contractors</h3>
+            <button class="btn btn-secondary btn-sm" onclick="closeModal('contractorModal')">✕</button>
         </div>
+        <div style="max-height: 300px; overflow-y: auto; margin-bottom: 16px;">
+            {% for c in contractors %}
+                <div class="contractor-tag">
+                    {{ c.name }}
+                    <span onclick="deleteContractor({{ c.id }}, '{{ c.name }}')">✕</span>
+                </div>
+            {% endfor %}
+        </div>
+        <button class="btn btn-secondary" onclick="closeModal('contractorModal')">Close</button>
     </div>
+</div>
 
-    <script>
-        const teamsMap = {{ teams_json | safe }};
-        const existingContractors = {{ contractors_json | safe }};
+<script>
+    // Embedded Backend JSON State
+    const TEAMS_MAP = {{ teams_json | safe }};
+    const CONTRACTORS_LIST = {{ contractors_json | safe }};
+    let pendingUploadPayload = null;
+
+    function openModal(id) {
+        document.getElementById(id).style.display = 'flex';
+    }
+
+    function closeModal(id) {
+        document.getElementById(id).style.display = 'none';
+    }
+
+    function changeWeek(weekDate) {
+        window.location.href = `/?selected_week=${encodeURIComponent(weekDate)}`;
+    }
+
+    function setBtnLoading(btnId, isLoading, text = '') {
+        const btn = document.getElementById(btnId);
+        if (!btn) return;
+        if (isLoading) {
+            btn.disabled = true;
+            btn.dataset.origText = btn.innerText;
+            btn.innerText = text;
+        } else {
+            btn.disabled = false;
+            btn.innerText = btn.dataset.origText || 'Submit';
+        }
+    }
+
+    function getSelectedLedgerIds() {
+        const checkboxes = document.querySelectorAll('.ledger-cb:checked');
+        return Array.from(checkboxes).map(cb => parseInt(cb.value));
+    }
+
+    function toggleAllCheckboxes(master) {
+        const checkboxes = document.querySelectorAll('.ledger-cb');
+        checkboxes.forEach(cb => cb.checked = master.checked);
+    }
+
+    function selectAllLedgers(checked) {
+        const checkboxes = document.querySelectorAll('.ledger-cb');
+        checkboxes.forEach(cb => cb.checked = checked);
+        const master = document.getElementById('masterCheckbox');
+        if (master) master.checked = checked;
+    }
+
+    function selectTeamMembers(teamName) {
+        selectAllLedgers(false);
+        const members = TEAMS_MAP[teamName] || [];
+        const lowerMembers = members.map(m => m.toLowerCase());
         
-        let pendingUploadData = null; // Stores upload payload when approval is required
+        const checkboxes = document.querySelectorAll('.ledger-cb');
+        checkboxes.forEach(cb => {
+            const contractorName = cb.dataset.contractor;
+            if (lowerMembers.includes(contractorName)) {
+                cb.checked = true;
+            }
+        });
+    }
 
-        function setBtnLoading(btnId, isLoading, loadingText = "Processing...") {
-            const btn = document.getElementById(btnId);
-            if (!btn) return;
-            if (isLoading) {
-                btn.disabled = true;
-                btn.dataset.oldContent = btn.innerHTML;
-                btn.innerHTML = `<span class="spinner"></span> <span>${loadingText}</span>`;
+    // Image Upload Handler
+    async function handleImageUpload(e) {
+        e.preventDefault();
+        const fileInput = document.getElementById('ledgerFile');
+        const weekDateInput = document.getElementById('uploadWeekDate').value.trim();
+        const overwriteInput = document.getElementById('overwriteWeek').checked;
+
+        if (!fileInput.files.length || !weekDateInput) {
+            return alert('Please select a file and specify the week date.');
+        }
+
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        formData.append('week_date', weekDateInput);
+        formData.append('overwrite', overwriteInput);
+
+        setBtnLoading('btnUpload', true, 'Parsing Image via GPT-4o...');
+
+        try {
+            const res = await fetch('/api/upload', {
+                method: 'POST',
+                body: formData
+            });
+
+            const data = await res.json();
+
+            if (res.ok && data.status === 'success') {
+                alert(`Successfully extracted ${data.extracted_count} ledger records!`);
+                window.location.href = `/?selected_week=${encodeURIComponent(data.week_date)}`;
+            } else if (data.status === 'approval_required') {
+                renderApprovalModal(data);
             } else {
-                btn.disabled = false;
-                if (btn.dataset.oldContent) btn.innerHTML = btn.dataset.oldContent;
+                alert(`Error: ${data.message || 'Failed to parse image.'}`);
             }
+        } catch (err) {
+            alert('Server or network error uploading image.');
+        } finally {
+            setBtnLoading('btnUpload', false);
         }
+    }
 
-        function filterContractors() {
-            const query = document.getElementById('contractorFilter').value.toLowerCase();
-            document.querySelectorAll('.contractor-item').forEach(item => {
-                const name = item.getAttribute('data-name').toLowerCase();
-                item.style.display = name.includes(query) ? 'flex' : 'none';
-            });
-        }
+    function renderApprovalModal(data) {
+        pendingUploadPayload = data;
+        const container = document.getElementById('mappingContainer');
+        container.innerHTML = '';
 
-        async function deleteContractor(id, name) {
-            if (!confirm(`Are you sure you want to delete contractor "${name}"? This will also remove associated ledger items and team memberships.`)) return;
+        data.unknown_contractors.forEach(unknown => {
+            const div = document.createElement('div');
+            div.className = 'mapping-row';
 
-            try {
-                const res = await fetch('/api/delete-contractor', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ contractor_id: id })
-                });
-                const data = await res.json();
-                if (res.ok && data.status === 'success') {
-                    location.reload();
-                } else {
-                    alert('Failed to delete contractor.');
-                }
-            } catch (err) {
-                alert('Network error deleting contractor.');
-            }
-        }
-
-        function updateSum() {
-            let total = 0;
-            document.querySelectorAll('.row-checkbox:checked').forEach(cb => {
-                total += parseFloat(cb.getAttribute('data-amount'));
-            });
-            document.getElementById('selectedSum').innerText = '$' + total.toFixed(2);
-        }
-
-        function toggleSelectAll(master) {
-            document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = master.checked);
-            updateSum();
-        }
-
-        function selectTeam(teamName) {
-            document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
-
-            if (!teamName || !teamsMap[teamName]) {
-                updateSum();
-                return;
-            }
-
-            const members = teamsMap[teamName].map(m => m.trim().toLowerCase());
-            let matchedCount = 0;
-
-            document.querySelectorAll('.row-checkbox').forEach(cb => {
-                const contractor = (cb.getAttribute('data-contractor') || '').trim().toLowerCase();
-                if (members.includes(contractor)) {
-                    cb.checked = true;
-                    matchedCount++;
-                }
+            let optionsHtml = `<option value="${unknown}">[Add as new: "${unknown}"]</option>`;
+            data.existing_contractors.forEach(exist => {
+                optionsHtml += `<option value="${exist}">Map to: ${exist}</option>`;
             });
 
-            updateSum();
-
-            if (matchedCount === 0) {
-                alert(`No unpaid entries found for "${teamName}" in this focused week.`);
-            }
-        }
-
-        function getSelectedIds() {
-            return Array.from(document.querySelectorAll('.row-checkbox:checked')).map(cb => parseInt(cb.value));
-        }
-
-        function formatDateRange(startStr, endStr) {
-            const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-            const [sYear, sMonth, sDay] = startStr.split('-');
-            const [eYear, eMonth, eDay] = endStr.split('-');
-            
-            const startFormatted = `${months[parseInt(sMonth) - 1]} ${parseInt(sDay)}`;
-            const endFormatted = `${months[parseInt(eMonth) - 1]} ${parseInt(eDay)}`;
-
-            return `${startFormatted} - ${endFormatted}, ${eYear}`;
-        }
-
-        document.getElementById('uploadForm').onsubmit = async (e) => {
-            e.preventDefault();
-            const startVal = document.getElementById('startDate').value;
-            const endVal = document.getElementById('endDate').value;
-            const overwrite = document.getElementById('overwriteCheck').checked;
-            
-            if (!startVal || !endVal) return alert('Please select both a Start Date and End Date.');
-
-            const rangeString = formatDateRange(startVal, endVal);
-            const formData = new FormData();
-            formData.append('week_date', rangeString);
-            formData.append('file', document.getElementById('imageFile').files[0]);
-            formData.append('overwrite', overwrite);
-            
-            setBtnLoading('btnUpload', true, 'Parsing Image...');
-            try {
-                const res = await fetch('/api/upload', { method: 'POST', body: formData });
-                const data = await res.json();
-
-                if (res.ok && data.status === 'success') {
-                    window.location.href = '/?selected_week=' + encodeURIComponent(data.week_date);
-                } else if (data.status === 'approval_required') {
-                    pendingUploadData = data;
-                    showApprovalModal(data);
-                } else {
-                    alert(data.message || 'Error uploading file.');
-                }
-            } catch (err) {
-                alert('Network error uploading file.');
-            } finally {
-                setBtnLoading('btnUpload', false);
-            }
-        };
-
-        function showApprovalModal(data) {
-            const container = document.getElementById('approvalRowsContainer');
-            container.innerHTML = '';
-
-            data.unknown_contractors.forEach((name, idx) => {
-                const row = document.createElement('div');
-                row.className = "bg-gray-900 border border-gray-700 p-3 rounded space-y-2";
-                
-                let optionsHtml = `<option value="__NEW__">➕ Add as NEW Contractor ("${name}")</option>`;
-                optionsHtml += `<option value="__MANUAL__">✏️ Type Manual Correction...</option>`;
-                optionsHtml += `<optgroup label="Map to Existing DB Contractor">`;
-                data.existing_contractors.forEach(existing => {
-                    optionsHtml += `<option value="${existing}">${existing}</option>`;
-                });
-                optionsHtml += `</optgroup>`;
-
-                row.innerHTML = `
-                    <div class="flex items-center justify-between text-xs font-semibold">
-                        <span class="text-amber-300">Detected: <strong class="text-white font-mono font-bold">${name}</strong></span>
-                        <span class="text-gray-400">Action Required</span>
-                    </div>
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <select id="actionSelect_${idx}" onchange="toggleManualInput(${idx})" class="bg-gray-800 text-xs p-2 rounded border border-gray-600 text-white" data-raw="${name}">
-                            ${optionsHtml}
-                        </select>
-                        <input type="text" id="manualInput_${idx}" placeholder="Enter correct contractor name" class="hidden bg-gray-800 text-xs p-2 rounded border border-gray-600 text-white">
-                    </div>
-                `;
-                container.appendChild(row);
-            });
-
-            document.getElementById('approvalModal').classList.remove('hidden');
-        }
-
-        function toggleManualInput(idx) {
-            const select = document.getElementById(`actionSelect_${idx}`);
-            const manualInput = document.getElementById(`manualInput_${idx}`);
-            if (select.value === '__MANUAL__') {
-                manualInput.classList.remove('hidden');
-                manualInput.focus();
-            } else {
-                manualInput.classList.add('hidden');
-            }
-        }
-
-        function closeApprovalModal() {
-            document.getElementById('approvalModal').classList.add('hidden');
-            pendingUploadData = null;
-        }
-
-        async function submitApprovedMappings() {
-            if (!pendingUploadData) return;
-
-            const mappings = {};
-            const unknownList = pendingUploadData.unknown_contractors;
-
-            for (let idx = 0; idx < unknownList.length; idx++) {
-                const rawName = unknownList[idx];
-                const select = document.getElementById(`actionSelect_${idx}`);
-                const actionVal = select.value;
-
-                if (actionVal === '__NEW__') {
-                    mappings[rawName] = rawName;
-                } else if (actionVal === '__MANUAL__') {
-                    const manualVal = document.getElementById(`manualInput_${idx}`).value.trim();
-                    if (!manualVal) {
-                        return alert(`Please enter a manual name correction for "${rawName}".`);
-                    }
-                    mappings[rawName] = manualVal;
-                } else {
-                    mappings[rawName] = actionVal;
-                }
-            }
-
-            setBtnLoading('btnConfirmApproval', true, 'Saving Ledger...');
-            try {
-                const res = await fetch('/api/confirm-upload', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        week_date: pendingUploadData.week_date,
-                        records: pendingUploadData.records,
-                        mappings: mappings,
-                        overwrite: pendingUploadData.overwrite
-                    })
-                });
-
-                const data = await res.json();
-                if (res.ok && data.status === 'success') {
-                    window.location.href = '/?selected_week=' + encodeURIComponent(data.week_date);
-                } else {
-                    alert(data.message || 'Error processing mappings.');
-                }
-            } catch (err) {
-                alert('Network error confirming upload.');
-            } finally {
-                setBtnLoading('btnConfirmApproval', false);
-            }
-        }
-
-        async function deleteWeekByString(weekDate, btnId) {
-            if (!weekDate) return alert('No week specified to delete.');
-            if (!confirm(`Are you sure you want to delete all entries for "${weekDate}"? This action cannot be undone.`)) return;
-
-            setBtnLoading(btnId, true, 'Deleting...');
-            try {
-                const res = await fetch('/api/delete-week', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ week_date: weekDate })
-                });
-
-                const data = await res.json();
-                if (res.ok && data.status === 'success') {
-                    alert(`Data for "${weekDate}" deleted successfully.`);
-                    window.location.href = '/';
-                } else {
-                    alert(data.message || 'Failed to delete week.');
-                }
-            } catch (err) {
-                alert('Network error deleting week.');
-            } finally {
-                setBtnLoading(btnId, false);
-            }
-        }
-
-        function deleteWeekByRange() {
-            const startVal = document.getElementById('delStartDate').value;
-            const endVal = document.getElementById('delEndDate').value;
-
-            if (!startVal || !endVal) {
-                return alert('Please select both a Start Date and End Date to delete.');
-            }
-
-            const rangeString = formatDateRange(startVal, endVal);
-            deleteWeekByString(rangeString, 'btnDeleteRange');
-        }
-
-        async function createTeam() {
-            const teamName = document.getElementById('teamName').value.trim();
-            const selectElement = document.getElementById('teamMembers');
-            const selectedMembers = Array.from(selectElement.selectedOptions).map(opt => opt.value);
-            
-            if (!teamName || !selectedMembers.length) {
-                return alert('Please enter a team name and select at least one contractor.');
-            }
-
-            setBtnLoading('btnCreateTeam', true, 'Creating...');
-            try {
-                const res = await fetch('/api/teams', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ team_name: teamName, contractor_names: selectedMembers })
-                });
-
-                const data = await res.json();
-                if (data.status === 'success') {
-                    alert(`Team "${teamName}" created successfully!`);
-                    location.reload();
-                } else {
-                    alert('Failed to create team.');
-                }
-            } catch (err) {
-                alert('Network error creating team.');
-            } finally {
-                setBtnLoading('btnCreateTeam', false);
-            }
-        }
-
-        async function reconcileCrypto() {
-    const ids = getSelectedIds();
-    const txId = document.getElementById('txId').value.trim();
-    const symbol = document.getElementById('cryptoSymbol').value;
-    
-    if (!ids.length) return alert('Please select at least one contractor line item.');
-    if (!txId) return alert('Please enter a Transaction Hash (TxID).');
-
-    setBtnLoading('btnReconcile', true, 'Verifying...');
-    try {
-        const res = await fetch('/api/reconcile-crypto', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ ledger_ids: ids, tx_id: txId, symbol: symbol })
+            div.innerHTML = `
+                <div><strong>${unknown}</strong></div>
+                <select class="unknown-mapping-select" data-raw="${unknown}">
+                    ${optionsHtml}
+                </select>
+            `;
+            container.appendChild(div);
         });
 
-        const data = await res.json();
-
-        if (res.ok && data.status === 'matched') {
-            alert(`✅ Match Confirmed!\nTotal Owed: $${data.total_owed}\nReceived: $${data.received_usd}\nStatus set to PAID.`);
-            location.reload();
-        } else if (data.status === 'mismatch') {
-            alert(`⚠️ Payment Mismatch!\nTotal Owed: $${data.total_owed}\nTx Value Found: $${data.received_usd}\nDifference: $${data.difference}`);
-        } else {
-            alert(`❌ Error: ${data.message || 'Failed to verify transaction.'}`);
-        }
-    } catch (err) {
-        alert('Network error communicating with server.');
-    } finally {
-        setBtnLoading('btnReconcile', false);
+        openModal('approvalModal');
     }
-}
 
-        async function markManual() {
-            const ids = getSelectedIds();
-            const notes = document.getElementById('manualNotes').value;
-            if(!ids.length) return alert('Select items to mark paid');
+    async function submitConfirmedUpload() {
+        if (!pendingUploadPayload) return;
 
-            setBtnLoading('btnMarkManual', true, 'Updating...');
-            try {
-                const res = await fetch('/api/mark-paid-manual', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ ledger_ids: ids, notes: notes })
-                });
-                const data = await res.json();
-                if(data.status === 'success') location.reload();
-            } catch (err) {
-                alert('Network error updating entries.');
-            } finally {
-                setBtnLoading('btnMarkManual', false);
+        const selects = document.querySelectorAll('.unknown-mapping-select');
+        const mappings = {};
+        selects.forEach(s => {
+            const rawName = s.dataset.raw;
+            const chosenName = s.value;
+            if (rawName !== chosenName) {
+                mappings[rawName] = chosenName;
             }
+        });
+
+        const payload = {
+            week_date: pendingUploadPayload.week_date,
+            records: pendingUploadPayload.records,
+            overwrite: pendingUploadPayload.overwrite,
+            mappings: mappings
+        };
+
+        try {
+            const res = await fetch('/api/confirm-upload', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+
+            const data = await res.json();
+            if (res.ok && data.status === 'success') {
+                closeModal('approvalModal');
+                window.location.href = `/?selected_week=${encodeURIComponent(data.week_date)}`;
+            } else {
+                alert(`Error: ${data.message || 'Confirmation failed.'}`);
+            }
+        } catch (err) {
+            alert('Failed to send upload confirmation.');
         }
-    </script>
+    }
+
+    // Crypto Verification Handler
+    async function reconcileCrypto() {
+        const ids = getSelectedLedgerIds();
+        const txId = document.getElementById('txId').value.trim();
+        const symbol = document.getElementById('cryptoSymbol').value;
+
+        if (!ids.length) return alert('Please select at least one contractor line item.');
+        if (!txId) return alert('Please enter a Transaction Hash (TxID).');
+
+        setBtnLoading('btnReconcile', true, 'Verifying Tx...');
+        try {
+            const res = await fetch('/api/reconcile-crypto', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ ledger_ids: ids, tx_id: txId, symbol: symbol })
+            });
+
+            const data = await res.json();
+
+            if (res.ok && data.status === 'matched') {
+                alert(`✅ Match Confirmed!\nTotal Owed: $${data.total_owed}\nReceived: $${data.received_usd}\nStatus updated to PAID.`);
+                location.reload();
+            } else if (data.status === 'mismatch') {
+                alert(`⚠️ Payment Mismatch!\nTotal Owed: $${data.total_owed}\nTx Value Found: $${data.received_usd}\nDifference: $${data.difference}`);
+            } else {
+                alert(`❌ Error: ${data.message || 'Verification failed.'}`);
+            }
+        } catch (err) {
+            alert('Network error connecting to API.');
+        } finally {
+            setBtnLoading('btnReconcile', false);
+        }
+    }
+
+    // Manual Payment Handler
+    async function markPaidManual() {
+        const ids = getSelectedLedgerIds();
+        const notes = document.getElementById('manualNotes').value.trim();
+
+        if (!ids.length) return alert('Please select at least one line item.');
+
+        setBtnLoading('btnManualPaid', true, 'Updating...');
+        try {
+            const res = await fetch('/api/mark-paid-manual', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ ledger_ids: ids, notes: notes })
+            });
+
+            if (res.ok) {
+                location.reload();
+            } else {
+                const data = await res.json();
+                alert(`Error: ${data.message || 'Failed to update records.'}`);
+            }
+        } catch (err) {
+            alert('Network error.');
+        } finally {
+            setBtnLoading('btnManualPaid', false);
+        }
+    }
+
+    // Week Deletion
+    async function deleteCurrentWeek() {
+        const currentWeek = "{{ selected_week }}";
+        if (!currentWeek) return;
+
+        if (!confirm(`Are you sure you want to delete all ledger entries for week "${currentWeek}"?`)) return;
+
+        try {
+            const res = await fetch('/api/delete-week', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ week_date: currentWeek })
+            });
+
+            const data = await res.json();
+            if (res.ok && data.status === 'success') {
+                alert(`Deleted ${data.deleted_rows} ledger entries.`);
+                window.location.href = '/';
+            } else {
+                alert(`Error: ${data.message || 'Delete failed.'}`);
+            }
+        } catch (err) {
+            alert('Failed to delete week.');
+        }
+    }
+
+    // Team Creation
+    async function submitCreateTeam() {
+        const teamName = document.getElementById('teamName').value.trim();
+        const checkedBoxes = document.querySelectorAll('.team-contractor-cb:checked');
+        const contractorNames = Array.from(checkedBoxes).map(cb => cb.value);
+
+        if (!teamName) return alert('Please provide a team name.');
+        if (!contractorNames.length) return alert('Please select at least one contractor.');
+
+        try {
+            const res = await fetch('/api/teams', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ team_name: teamName, contractor_names: contractorNames })
+            });
+
+            if (res.ok) {
+                closeModal('teamModal');
+                location.reload();
+            } else {
+                alert('Failed to create team.');
+            }
+        } catch (err) {
+            alert('Error connecting to server.');
+        }
+    }
+
+    // Delete Contractor
+    async function deleteContractor(id, name) {
+        if (!confirm(`Are you sure you want to delete contractor "${name}" and all associated ledgers?`)) return;
+
+        try {
+            const res = await fetch('/api/delete-contractor', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ contractor_id: id })
+            });
+
+            if (res.ok) {
+                location.reload();
+            } else {
+                alert('Failed to delete contractor.');
+            }
+        } catch (err) {
+            alert('Error deleting contractor.');
+        }
+    }
+</script>
+
 </body>
 </html>
