@@ -7,16 +7,19 @@ import pytz
 EST = pytz.timezone("America/New_York")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+
 def get_db():
     if not DATABASE_URL:
         raise ValueError("DATABASE_URL environment variable is not set on Render.")
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+
 
 def init_db():
     if not DATABASE_URL:
         print("CRITICAL: DATABASE_URL environment variable is missing!")
         return
 
+    conn = None
     try:
         conn = get_db()
         cursor = conn.cursor()
@@ -57,12 +60,34 @@ def init_db():
         );
         """)
 
+        # Indexes to keep the dashboard, filtering, and the duplicate-tx
+        # check fast as the table grows. Not UNIQUE on crypto_tx_id on
+        # purpose: a single transaction is allowed to pay several
+        # contractors' rows at once within the same reconciliation call.
+        # Reuse of a tx hash across a *different* reconciliation is instead
+        # blocked in application code (see /api/reconcile-crypto).
+        cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_weekly_ledgers_week_date
+            ON weekly_ledgers (week_date);
+        """)
+        cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_weekly_ledgers_contractor
+            ON weekly_ledgers (contractor_id);
+        """)
+        cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_weekly_ledgers_tx
+            ON weekly_ledgers (crypto_tx_id) WHERE crypto_tx_id IS NOT NULL;
+        """)
+
         conn.commit()
         cursor.close()
         conn.close()
         print("Database initialized successfully.")
     except Exception as e:
         print(f"DATABASE INIT ERROR: {e}")
+        if conn:
+            conn.close()
+
 
 def get_est_now():
     return datetime.now(EST).strftime("%Y-%m-%d %H:%M:%S EST")
