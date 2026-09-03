@@ -11,7 +11,7 @@ from crypto_service import get_tx_usd_value
 
 app = FastAPI()
 
-# Use absolute pathing so Render locates the templates folder reliably
+# Absolute path resolution for Render deployment stability
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
@@ -25,6 +25,7 @@ def startup():
 async def index(request: Request):
     ledgers = []
     teams = []
+    contractors = []
     try:
         conn = get_db()
         cursor = conn.cursor()
@@ -39,6 +40,10 @@ async def index(request: Request):
         cursor.execute("SELECT * FROM teams")
         teams = cursor.fetchall()
 
+        # Fetch saved contractors for pre-selection dropdown
+        cursor.execute("SELECT * FROM contractors ORDER BY name ASC")
+        contractors = cursor.fetchall()
+
         cursor.close()
         conn.close()
     except Exception as e:
@@ -47,7 +52,7 @@ async def index(request: Request):
     return templates.TemplateResponse(
         request=request, 
         name="index.html", 
-        context={"ledgers": ledgers, "teams": teams}
+        context={"ledgers": ledgers, "teams": teams, "contractors": contractors}
     )
 
 @app.post("/api/upload")
