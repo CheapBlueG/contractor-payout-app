@@ -1,49 +1,62 @@
-import sqlite3
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from datetime import datetime
 import pytz
 
 EST = pytz.timezone("America/New_York")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 def get_db():
-    conn = sqlite3.connect("app.db")
-    conn.row_factory = sqlite3.Row
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
     return conn
 
 def init_db():
+    if not DATABASE_URL:
+        print("DATABASE_URL environment variable is not set!")
+        return
+
     conn = get_db()
     cursor = conn.cursor()
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS contractors (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE NOT NULL
-    )""")
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) UNIQUE NOT NULL
+    );
+    """)
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS teams (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE NOT NULL
-    )""")
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) UNIQUE NOT NULL
+    );
+    """)
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS team_members (
-        team_id INTEGER,
-        contractor_id INTEGER,
-        PRIMARY KEY (team_id, contractor_id),
-        FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE CASCADE,
-        FOREIGN KEY(contractor_id) REFERENCES contractors(id) ON DELETE CASCADE
-    )""")
+        team_id INTEGER REFERENCES teams(id) ON DELETE CASCADE,
+        contractor_id INTEGER REFERENCES contractors(id) ON DELETE CASCADE,
+        PRIMARY KEY (team_id, contractor_id)
+    );
+    """)
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS weekly_ledgers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        week_date TEXT NOT NULL,
-        contractor_id INTEGER,
-        amount_owed_usd REAL NOT NULL,
-        status TEXT DEFAULT 'UNPAID',
-        paid_at_est TEXT,
+        id SERIAL PRIMARY KEY,
+        week_date VARCHAR(50) NOT NULL,
+        contractor_id INTEGER REFERENCES contractors(id),
+        amount_owed_usd NUMERIC(10, 2) NOT NULL,
+        status VARCHAR(50) DEFAULT 'UNPAID',
+        paid_at_est VARCHAR(100),
         crypto_tx_id TEXT,
-        crypto_symbol TEXT,
-        notes TEXT,
-        FOREIGN KEY(contractor_id) REFERENCES contractors(id)
-    )""")
+        crypto_symbol VARCHAR(20),
+        notes TEXT
+    );
+    """)
+
     conn.commit()
+    cursor.close()
     conn.close()
 
 def get_est_now():
