@@ -589,31 +589,37 @@
         }
 
         async function reconcileCrypto() {
-            const ids = getSelectedIds();
-            const txId = document.getElementById('txId').value.trim();
-            const symbol = document.getElementById('cryptoSymbol').value;
-            if(!ids.length || !txId) return alert('Select items and enter TxID');
+    const ids = getSelectedIds();
+    const txId = document.getElementById('txId').value.trim();
+    const symbol = document.getElementById('cryptoSymbol').value;
+    
+    if (!ids.length) return alert('Please select at least one contractor line item.');
+    if (!txId) return alert('Please enter a Transaction Hash (TxID).');
 
-            setBtnLoading('btnReconcile', true, 'Verifying...');
-            try {
-                const res = await fetch('/api/reconcile-crypto', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ ledger_ids: ids, tx_id: txId, symbol: symbol })
-                });
-                const data = await res.json();
-                if(data.status === 'matched') {
-                    alert('Successfully matched and marked paid!');
-                    location.reload();
-                } else {
-                    alert(`Mismatch! Total Owed: $${data.total_owed}, Tx Value: $${data.received_usd}`);
-                }
-            } catch (err) {
-                alert('Network error reconciling transaction.');
-            } finally {
-                setBtnLoading('btnReconcile', false);
-            }
+    setBtnLoading('btnReconcile', true, 'Verifying...');
+    try {
+        const res = await fetch('/api/reconcile-crypto', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ ledger_ids: ids, tx_id: txId, symbol: symbol })
+        });
+
+        const data = await res.json();
+
+        if (res.ok && data.status === 'matched') {
+            alert(`✅ Match Confirmed!\nTotal Owed: $${data.total_owed}\nReceived: $${data.received_usd}\nStatus set to PAID.`);
+            location.reload();
+        } else if (data.status === 'mismatch') {
+            alert(`⚠️ Payment Mismatch!\nTotal Owed: $${data.total_owed}\nTx Value Found: $${data.received_usd}\nDifference: $${data.difference}`);
+        } else {
+            alert(`❌ Error: ${data.message || 'Failed to verify transaction.'}`);
         }
+    } catch (err) {
+        alert('Network error communicating with server.');
+    } finally {
+        setBtnLoading('btnReconcile', false);
+    }
+}
 
         async function markManual() {
             const ids = getSelectedIds();
