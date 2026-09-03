@@ -10,7 +10,10 @@ from database import init_db, get_db, get_est_now
 from crypto_service import get_tx_usd_value
 
 app = FastAPI()
-templates = Jinja2Templates(directory="templates")
+
+# Use absolute pathing so Render locates the templates folder reliably
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -20,23 +23,32 @@ def startup():
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT l.id, l.week_date, c.name as contractor, l.amount_owed_usd, l.status, l.paid_at_est, l.crypto_tx_id, l.crypto_symbol, l.notes
-        FROM weekly_ledgers l
-        JOIN contractors c ON l.contractor_id = c.id
-        ORDER BY l.week_date DESC, c.name ASC
-    """)
-    ledgers = cursor.fetchall()
+    ledgers = []
+    teams = []
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT l.id, l.week_date, c.name as contractor, l.amount_owed_usd, l.status, l.paid_at_est, l.crypto_tx_id, l.crypto_symbol, l.notes
+            FROM weekly_ledgers l
+            JOIN contractors c ON l.contractor_id = c.id
+            ORDER BY l.week_date DESC, c.name ASC
+        """)
+        ledgers = cursor.fetchall()
 
-    cursor.execute("SELECT * FROM teams")
-    teams = cursor.fetchall()
+        cursor.execute("SELECT * FROM teams")
+        teams = cursor.fetchall()
 
-    cursor.close()
-    conn.close()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error fetching index data: {e}")
 
-    return templates.TemplateResponse("index.html", {"request": request, "ledgers": ledgers, "teams": teams})
+    return templates.TemplateResponse(
+        request=request, 
+        name="index.html", 
+        context={"ledgers": ledgers, "teams": teams}
+    )
 
 @app.post("/api/upload")
 async def upload_weekly_image(file: UploadFile = File(...), week_date: str = Form(...)):
