@@ -275,6 +275,9 @@ async def reconcile_crypto(
     tx_id: str = Body(...),
     symbol: str = Body(...)
 ):
+    if not ledger_ids or not tx_id:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Missing ledger selection or TxID."})
+
     conn = get_db()
     cursor = conn.cursor()
     placeholders = ",".join(["%s"] * len(ledger_ids))
@@ -283,7 +286,23 @@ async def reconcile_crypto(
     res = cursor.fetchone()
     total_owed = float(res["total"]) if res and res["total"] else 0.0
 
-    tx_usd_val = get_tx_usd_value(tx_id, symbol)
+    # Execute blockchain lookup safely
+    try:
+        tx_usd_val = get_tx_usd_value(tx_id, symbol)
+    except ValueError as err:
+        cursor.close()
+        conn.close()
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": str(err)}
+        )
+    except Exception as err:
+        cursor.close()
+        conn.close()
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": f"Unexpected verification error: {str(err)}"}
+        )
 
     if abs(tx_usd_val - total_owed) <= 5.0:
         now_est = get_est_now()
@@ -295,17 +314,16 @@ async def reconcile_crypto(
         conn.commit()
         cursor.close()
         conn.close()
-        return {"status": "matched", "total_owed": total_owed, "received_usd": tx_usd_val}
+        return {"status": "matched", "total_owed": total_owed, "received_usd": round(tx_usd_val, 2)}
     else:
         cursor.close()
         conn.close()
         return {
             "status": "mismatch", 
             "total_owed": total_owed, 
-            "received_usd": tx_usd_val,
+            "received_usd": round(tx_usd_val, 2),
             "difference": round(tx_usd_val - total_owed, 2)
         }
-
 @app.post("/api/teams")
 async def create_team(team_name: str = Body(...), contractor_names: list[str] = Body(...)):
     conn = get_db()
