@@ -52,7 +52,6 @@ async def index(request: Request, selected_week: str = None):
         cursor.execute("SELECT * FROM teams")
         teams = cursor.fetchall()
 
-        # Build team-to-contractor mapping for real-time frontend grouping
         cursor.execute("""
             SELECT t.name as team_name, c.name as contractor_name
             FROM teams t
@@ -84,6 +83,7 @@ async def index(request: Request, selected_week: str = None):
             "teams_map": teams_map,
             "teams_json": json.dumps(teams_map),
             "contractors": contractors,
+            "contractors_json": json.dumps([c["name"] for c in contractors]),
             "weeks": weeks,
             "selected_week": selected_week
         }
@@ -102,19 +102,16 @@ async def upload_weekly_image(
     cursor.execute("SELECT COUNT(*) as cnt FROM weekly_ledgers WHERE week_date = %s", (clean_week_date,))
     check_res = cursor.fetchone()
     
-    if check_res and check_res["cnt"] > 0:
-        if not overwrite:
-            cursor.close()
-            conn.close()
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "status": "error", 
-                    "message": f"Data for '{clean_week_date}' already exists. Check 'Overwrite if week exists' or delete the range below."
-                }
-            )
-        else:
-            cursor.execute("DELETE FROM weekly_ledgers WHERE week_date = %s", (clean_week_date,))
+    if check_res and check_res["cnt"] > 0 and not overwrite:
+        cursor.close()
+        conn.close()
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error", 
+                "message": f"Data for '{clean_week_date}' already exists. Check 'Overwrite if week exists' or delete the range below."
+            }
+        )
 
     contents = await file.read()
     base64_image = base64.b64encode(contents).decode("utf-8")
@@ -143,6 +140,32 @@ async def upload_weekly_image(
     data = json.loads(response.choices[0].message.content)
     records = data.get("records", [])
 
+    cursor.execute("SELECT name FROM contractors")
+    existing_db_names = [row["name"].lower() for row in cursor.fetchall()]
+
+    unknown_contractors = []
+    for r in records:
+        c_name = str(r["contractor"]).strip().lower()
+        if c_name not in existing_db_names and c_name not in unknown_contractors:
+            unknown_contractors.append(c_name)
+
+    # Require approval if unknown contractor names are detected
+    if unknown_contractors:
+        cursor.close()
+        conn.close()
+        return JSONResponse({
+            "status": "approval_required",
+            "week_date": clean_week_date,
+            "overwrite": overwrite,
+            "unknown_contractors": unknown_contractors,
+            "existing_contractors": sorted(existing_db_names),
+            "records": records
+        })
+
+    # Execute insert if all names already exist in DB
+    if overwrite:
+        cursor.execute("DELETE FROM weekly_ledgers WHERE week_date = %s", (clean_week_date,))
+
     for r in records:
         name = str(r["contractor"]).strip().lower()
         amount = float(r["profits"])
@@ -160,6 +183,59 @@ async def upload_weekly_image(
     cursor.close()
     conn.close()
     return JSONResponse({"status": "success", "extracted_count": len(records), "week_date": clean_week_date})
+
+@app.post("/api/confirm-upload")
+async def confirm_upload(payload: dict = Body(...)):
+    week_date = payload.get("week_date")
+    records = payload.get("records", [])
+    mappings = payload.get("mappings", {})  # { "typo_name": "corrected_name" }
+    overwrite = payload.get("overwrite", False)
+
+    if not week_date or not records:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Missing required confirmation payload."})
+
+    conn = get_db()
+    cursor = conn.cursor()
+    clean_week_date = week_date.strip()
+
+    if overwrite:
+        cursor.execute("DELETE FROM weekly_ledgers WHERE week_date = %s", (clean_week_date,))
+
+    for r in records:
+        raw_name = str(r["contractor"]).strip().lower()
+        final_name = mappings.get(raw_name, raw_name).strip().lower()
+        amount = float(r["profits"])
+
+        cursor.execute("INSERT INTO contractors (name) VALUES (%s) ON CONFLICT (name) DO NOTHING", (final_name,))
+        cursor.execute("SELECT id FROM contractors WHERE name = %s", (final_name,))
+        cid = cursor.fetchone()["id"]
+
+        cursor.execute("""
+            INSERT INTO weekly_ledgers (week_date, contractor_id, amount_owed_usd, status)
+            VALUES (%s, %s, %s, 'UNPAID')
+        """, (clean_week_date, cid, amount))
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return {"status": "success", "extracted_count": len(records), "week_date": clean_week_date}
+
+@app.post("/api/delete-contractor")
+async def delete_contractor(payload: dict = Body(...)):
+    contractor_id = payload.get("contractor_id")
+    if not contractor_id:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Contractor ID is required."})
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM team_members WHERE contractor_id = %s", (contractor_id,))
+    cursor.execute("DELETE FROM weekly_ledgers WHERE contractor_id = %s", (contractor_id,))
+    cursor.execute("DELETE FROM contractors WHERE id = %s", (contractor_id,))
+    deleted_count = cursor.rowcount
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return {"status": "success", "deleted": deleted_count}
 
 @app.post("/api/delete-week")
 async def delete_week(payload: dict = Body(...)):
