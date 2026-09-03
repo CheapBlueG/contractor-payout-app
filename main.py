@@ -79,8 +79,9 @@ async def upload_weekly_image(
 ):
     conn = get_db()
     cursor = conn.cursor()
+    clean_week_date = week_date.strip()
 
-    cursor.execute("SELECT COUNT(*) as cnt FROM weekly_ledgers WHERE week_date = %s", (week_date,))
+    cursor.execute("SELECT COUNT(*) as cnt FROM weekly_ledgers WHERE week_date = %s", (clean_week_date,))
     check_res = cursor.fetchone()
     
     if check_res and check_res["cnt"] > 0:
@@ -91,11 +92,11 @@ async def upload_weekly_image(
                 status_code=400,
                 content={
                     "status": "error", 
-                    "message": f"Data for '{week_date}' already exists. Check 'Overwrite existing week' or delete the week below before uploading."
+                    "message": f"Data for '{clean_week_date}' already exists. Check 'Overwrite if week exists' or delete the range below."
                 }
             )
         else:
-            cursor.execute("DELETE FROM weekly_ledgers WHERE week_date = %s", (week_date,))
+            cursor.execute("DELETE FROM weekly_ledgers WHERE week_date = %s", (clean_week_date,))
 
     contents = await file.read()
     base64_image = base64.b64encode(contents).decode("utf-8")
@@ -135,12 +136,12 @@ async def upload_weekly_image(
         cursor.execute("""
             INSERT INTO weekly_ledgers (week_date, contractor_id, amount_owed_usd, status)
             VALUES (%s, %s, %s, 'UNPAID')
-        """, (week_date, cid, amount))
+        """, (clean_week_date, cid, amount))
 
     conn.commit()
     cursor.close()
     conn.close()
-    return JSONResponse({"status": "success", "extracted_count": len(records), "week_date": week_date})
+    return JSONResponse({"status": "success", "extracted_count": len(records), "week_date": clean_week_date})
 
 @app.post("/api/delete-week")
 async def delete_week(payload: dict = Body(...)):
@@ -148,8 +149,85 @@ async def delete_week(payload: dict = Body(...)):
     if not week_date:
         return JSONResponse(status_code=400, content={"status": "error", "message": "Week date parameter is required."})
 
+    clean_week_date = week_date.strip()
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM weekly_ledgers WHERE week_date = %s", (week_date,))
+    cursor.execute("DELETE FROM weekly_ledgers WHERE week_date = %s", (clean_week_date,))
+    deleted_count = cursor.rowcount
     conn.commit()
-    cursor.close
+    cursor.close()
+    conn.close()
+    return {"status": "success", "deleted_rows": deleted_count}
+
+@app.post("/api/mark-paid-manual")
+async def mark_paid_manual(ledger_ids: list[int] = Body(...), notes: str = Body("")):
+    conn = get_db()
+    cursor = conn.cursor()
+    now_est = get_est_now()
+    placeholders = ",".join(["%s"] * len(ledger_ids))
+    cursor.execute(f"""
+        UPDATE weekly_ledgers 
+        SET status = 'MANUALLY_PAID', paid_at_est = %s, notes = %s
+        WHERE id IN ({placeholders})
+    """, [now_est, notes] + ledger_ids)
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return {"status": "success"}
+
+@app.post("/api/reconcile-crypto")
+async def reconcile_crypto(
+    ledger_ids: list[int] = Body(...),
+    tx_id: str = Body(...),
+    symbol: str = Body(...)
+):
+    conn = get_db()
+    cursor = conn.cursor()
+    placeholders = ",".join(["%s"] * len(ledger_ids))
+
+    cursor.execute(f"SELECT SUM(amount_owed_usd) as total FROM weekly_ledgers WHERE id IN ({placeholders})", ledger_ids)
+    res = cursor.fetchone()
+    total_owed = float(res["total"]) if res and res["total"] else 0.0
+
+    tx_usd_val = get_tx_usd_value(tx_id, symbol)
+
+    if abs(tx_usd_val - total_owed) <= 5.0:
+        now_est = get_est_now()
+        cursor.execute(f"""
+            UPDATE weekly_ledgers 
+            SET status = 'PAID', paid_at_est = %s, crypto_tx_id = %s, crypto_symbol = %s
+            WHERE id IN ({placeholders})
+        """, [now_est, tx_id, symbol.upper()] + ledger_ids)
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return {"status": "matched", "total_owed": total_owed, "received_usd": tx_usd_val}
+    else:
+        cursor.close()
+        conn.close()
+        return {
+            "status": "mismatch", 
+            "total_owed": total_owed, 
+            "received_usd": tx_usd_val,
+            "difference": round(tx_usd_val - total_owed, 2)
+        }
+
+@app.post("/api/teams")
+async def create_team(team_name: str = Body(...), contractor_names: list[str] = Body(...)):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO teams (name) VALUES (%s) ON CONFLICT (name) DO NOTHING", (team_name,))
+    cursor.execute("SELECT id FROM teams WHERE name = %s", (team_name,))
+    team_id = cursor.fetchone()["id"]
+
+    for name in contractor_names:
+        name_clean = name.strip().lower()
+        cursor.execute("INSERT INTO contractors (name) VALUES (%s) ON CONFLICT (name) DO NOTHING", (name_clean,))
+        cursor.execute("SELECT id FROM contractors WHERE name = %s", (name_clean,))
+        cid = cursor.fetchone()["id"]
+        cursor.execute("INSERT INTO team_members (team_id, contractor_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", (team_id, cid))
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return {"status": "success"}
