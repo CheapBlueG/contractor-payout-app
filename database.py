@@ -8,12 +8,14 @@ EST = pytz.timezone("America/New_York")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 def get_db():
+    """Establishes connection to the Render PostgreSQL database."""
     conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
     return conn
 
 def init_db():
+    """Initializes tables using PostgreSQL syntax on app startup."""
     if not DATABASE_URL:
-        print("DATABASE_URL environment variable is not set!")
+        print("DATABASE_URL environment variable is missing!")
         return
 
     conn = get_db()
@@ -45,7 +47,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS weekly_ledgers (
         id SERIAL PRIMARY KEY,
         week_date VARCHAR(50) NOT NULL,
-        contractor_id INTEGER REFERENCES contractors(id),
+        contractor_id INTEGER REFERENCES contractors(id) ON DELETE CASCADE,
         amount_owed_usd NUMERIC(10, 2) NOT NULL,
         status VARCHAR(50) DEFAULT 'UNPAID',
         paid_at_est VARCHAR(100),
@@ -60,4 +62,5 @@ def init_db():
     conn.close()
 
 def get_est_now():
+    """Returns the current timestamp explicitly formatted in Eastern Standard Time."""
     return datetime.now(EST).strftime("%Y-%m-%d %H:%M:%S EST")
