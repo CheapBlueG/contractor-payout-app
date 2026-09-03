@@ -28,10 +28,12 @@ async def index(request: Request):
         JOIN contractors c ON l.contractor_id = c.id
         ORDER BY l.week_date DESC, c.name ASC
     """)
-    ledgers = [dict(row) for row in cursor.fetchall()]
+    ledgers = cursor.fetchall()
 
     cursor.execute("SELECT * FROM teams")
-    teams = [dict(row) for row in cursor.fetchall()]
+    teams = cursor.fetchall()
+
+    cursor.close()
     conn.close()
 
     return templates.TemplateResponse("index.html", {"request": request, "ledgers": ledgers, "teams": teams})
@@ -71,16 +73,17 @@ async def upload_weekly_image(file: UploadFile = File(...), week_date: str = For
         name = str(r["contractor"]).strip().lower()
         amount = float(r["profits"])
 
-        cursor.execute("INSERT OR IGNORE INTO contractors (name) VALUES (?)", (name,))
-        cursor.execute("SELECT id FROM contractors WHERE name = ?", (name,))
+        cursor.execute("INSERT INTO contractors (name) VALUES (%s) ON CONFLICT (name) DO NOTHING", (name,))
+        cursor.execute("SELECT id FROM contractors WHERE name = %s", (name,))
         cid = cursor.fetchone()["id"]
 
         cursor.execute("""
             INSERT INTO weekly_ledgers (week_date, contractor_id, amount_owed_usd, status)
-            VALUES (?, ?, ?, 'UNPAID')
+            VALUES (%s, %s, %s, 'UNPAID')
         """, (week_date, cid, amount))
 
     conn.commit()
+    cursor.close()
     conn.close()
     return JSONResponse({"status": "success", "extracted_count": len(records)})
 
@@ -89,13 +92,14 @@ async def mark_paid_manual(ledger_ids: list[int] = Body(...), notes: str = Body(
     conn = get_db()
     cursor = conn.cursor()
     now_est = get_est_now()
-    placeholders = ",".join(["?"] * len(ledger_ids))
+    placeholders = ",".join(["%s"] * len(ledger_ids))
     cursor.execute(f"""
         UPDATE weekly_ledgers 
-        SET status = 'MANUALLY_PAID', paid_at_est = ?, notes = ?
+        SET status = 'MANUALLY_PAID', paid_at_est = %s, notes = %s
         WHERE id IN ({placeholders})
     """, [now_est, notes] + ledger_ids)
     conn.commit()
+    cursor.close()
     conn.close()
     return {"status": "success"}
 
@@ -107,10 +111,11 @@ async def reconcile_crypto(
 ):
     conn = get_db()
     cursor = conn.cursor()
-    placeholders = ",".join(["?"] * len(ledger_ids))
-    
+    placeholders = ",".join(["%s"] * len(ledger_ids))
+
     cursor.execute(f"SELECT SUM(amount_owed_usd) as total FROM weekly_ledgers WHERE id IN ({placeholders})", ledger_ids)
-    total_owed = cursor.fetchone()["total"] or 0.0
+    res = cursor.fetchone()
+    total_owed = float(res["total"]) if res and res["total"] else 0.0
 
     tx_usd_val = get_tx_usd_value(tx_id, symbol)
 
@@ -118,13 +123,15 @@ async def reconcile_crypto(
         now_est = get_est_now()
         cursor.execute(f"""
             UPDATE weekly_ledgers 
-            SET status = 'PAID', paid_at_est = ?, crypto_tx_id = ?, crypto_symbol = ?
+            SET status = 'PAID', paid_at_est = %s, crypto_tx_id = %s, crypto_symbol = %s
             WHERE id IN ({placeholders})
         """, [now_est, tx_id, symbol.upper()] + ledger_ids)
         conn.commit()
+        cursor.close()
         conn.close()
         return {"status": "matched", "total_owed": total_owed, "received_usd": tx_usd_val}
     else:
+        cursor.close()
         conn.close()
         return {
             "status": "mismatch", 
@@ -137,17 +144,18 @@ async def reconcile_crypto(
 async def create_team(team_name: str = Body(...), contractor_names: list[str] = Body(...)):
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("INSERT OR IGNORE INTO teams (name) VALUES (?)", (team_name,))
-    cursor.execute("SELECT id FROM teams WHERE name = ?", (team_name,))
+    cursor.execute("INSERT INTO teams (name) VALUES (%s) ON CONFLICT (name) DO NOTHING", (team_name,))
+    cursor.execute("SELECT id FROM teams WHERE name = %s", (team_name,))
     team_id = cursor.fetchone()["id"]
 
     for name in contractor_names:
         name_clean = name.strip().lower()
-        cursor.execute("INSERT OR IGNORE INTO contractors (name) VALUES (?)", (name_clean,))
-        cursor.execute("SELECT id FROM contractors WHERE name = ?", (name_clean,))
+        cursor.execute("INSERT INTO contractors (name) VALUES (%s) ON CONFLICT (name) DO NOTHING", (name_clean,))
+        cursor.execute("SELECT id FROM contractors WHERE name = %s", (name_clean,))
         cid = cursor.fetchone()["id"]
-        cursor.execute("INSERT OR IGNORE INTO team_members (team_id, contractor_id) VALUES (?, ?)", (team_id, cid))
+        cursor.execute("INSERT INTO team_members (team_id, contractor_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", (team_id, cid))
 
     conn.commit()
+    cursor.close()
     conn.close()
     return {"status": "success"}
