@@ -26,6 +26,7 @@ async def index(request: Request, selected_week: str = None):
     teams = []
     contractors = []
     weeks = []
+    teams_map = {}
     
     try:
         conn = get_db()
@@ -51,6 +52,21 @@ async def index(request: Request, selected_week: str = None):
         cursor.execute("SELECT * FROM teams")
         teams = cursor.fetchall()
 
+        # Build team-to-contractor mapping for real-time frontend grouping
+        cursor.execute("""
+            SELECT t.name as team_name, c.name as contractor_name
+            FROM teams t
+            JOIN team_members tm ON t.id = tm.team_id
+            JOIN contractors c ON tm.contractor_id = c.id
+        """)
+        team_rows = cursor.fetchall()
+        for row in team_rows:
+            t_name = row["team_name"]
+            c_name = row["contractor_name"]
+            if t_name not in teams_map:
+                teams_map[t_name] = []
+            teams_map[t_name].append(c_name)
+
         cursor.execute("SELECT * FROM contractors ORDER BY name ASC")
         contractors = cursor.fetchall()
 
@@ -65,6 +81,8 @@ async def index(request: Request, selected_week: str = None):
         context={
             "ledgers": ledgers, 
             "teams": teams, 
+            "teams_map": teams_map,
+            "teams_json": json.dumps(teams_map),
             "contractors": contractors,
             "weeks": weeks,
             "selected_week": selected_week
