@@ -11,7 +11,6 @@ from crypto_service import get_tx_usd_value
 
 app = FastAPI()
 
-# Absolute path resolution for Render deployment stability
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
@@ -22,25 +21,39 @@ def startup():
     init_db()
 
 @app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
+async def index(request: Request, selected_week: str = None):
     ledgers = []
     teams = []
     contractors = []
+    weeks = []
+    
     try:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT l.id, l.week_date, c.name as contractor, l.amount_owed_usd, l.status, l.paid_at_est, l.crypto_tx_id, l.crypto_symbol, l.notes
-            FROM weekly_ledgers l
-            JOIN contractors c ON l.contractor_id = c.id
-            ORDER BY l.week_date DESC, c.name ASC
-        """)
-        ledgers = cursor.fetchall()
+
+        # Get all distinct week ranges from database
+        cursor.execute("SELECT DISTINCT week_date FROM weekly_ledgers ORDER BY id DESC")
+        weeks_res = cursor.fetchall()
+        weeks = [w["week_date"] for w in weeks_res]
+
+        # Default to the most recently uploaded week if none is specified
+        if not selected_week and weeks:
+            selected_week = weeks[0]
+
+        # Query ledgers strictly for the selected week
+        if selected_week:
+            cursor.execute("""
+                SELECT l.id, l.week_date, c.name as contractor, l.amount_owed_usd, l.status, l.paid_at_est, l.crypto_tx_id, l.crypto_symbol, l.notes
+                FROM weekly_ledgers l
+                JOIN contractors c ON l.contractor_id = c.id
+                WHERE l.week_date = %s
+                ORDER BY c.name ASC
+            """, (selected_week,))
+            ledgers = cursor.fetchall()
 
         cursor.execute("SELECT * FROM teams")
         teams = cursor.fetchall()
 
-        # Fetch saved contractors for pre-selection dropdown
         cursor.execute("SELECT * FROM contractors ORDER BY name ASC")
         contractors = cursor.fetchall()
 
@@ -52,7 +65,13 @@ async def index(request: Request):
     return templates.TemplateResponse(
         request=request, 
         name="index.html", 
-        context={"ledgers": ledgers, "teams": teams, "contractors": contractors}
+        context={
+            "ledgers": ledgers, 
+            "teams": teams, 
+            "contractors": contractors,
+            "weeks": weeks,
+            "selected_week": selected_week
+        }
     )
 
 @app.post("/api/upload")
@@ -102,7 +121,7 @@ async def upload_weekly_image(file: UploadFile = File(...), week_date: str = For
     conn.commit()
     cursor.close()
     conn.close()
-    return JSONResponse({"status": "success", "extracted_count": len(records)})
+    return JSONResponse({"status": "success", "extracted_count": len(records), "week_date": week_date})
 
 @app.post("/api/mark-paid-manual")
 async def mark_paid_manual(ledger_ids: list[int] = Body(...), notes: str = Body("")):
