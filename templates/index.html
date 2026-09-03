@@ -49,6 +49,29 @@
             </form>
         </div>
 
+        <!-- Delete Contractor / Wrong Names Manager -->
+        <div class="bg-gray-800 p-6 rounded-lg border border-gray-700 space-y-4">
+            <div class="flex items-center justify-between border-b border-gray-700 pb-3">
+                <h2 class="text-xl font-semibold text-amber-400 flex items-center gap-2">
+                    <span>👤</span> Contractor Name Database Manager
+                </h2>
+                <input type="text" id="contractorFilter" onkeyup="filterContractors()" placeholder="Filter contractors..." class="bg-gray-700 px-3 py-1 rounded text-xs border border-gray-600 w-48 text-white">
+            </div>
+
+            <div class="max-h-40 overflow-y-auto pr-2 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2" id="contractorListGrid">
+                {% for c in contractors %}
+                <div class="contractor-item bg-gray-900 border border-gray-700 p-2 rounded flex items-center justify-between gap-2" data-name="{{ c.name }}">
+                    <span class="text-sm font-mono text-gray-200 truncate">{{ c.name }}</span>
+                    <button type="button" onclick="deleteContractor({{ c.id }}, '{{ c.name }}')" class="bg-red-800 hover:bg-red-600 text-white text-xs px-2 py-1 rounded font-bold transition-all shrink-0">
+                        Delete
+                    </button>
+                </div>
+                {% else %}
+                <p class="text-xs text-gray-500 col-span-3">No contractors in database.</p>
+                {% endfor %}
+            </div>
+        </div>
+
         <!-- 2. Dedicated Delete Manager Section -->
         <div class="bg-red-950/30 p-6 rounded-lg border border-red-800/60 space-y-4">
             <h2 class="text-xl font-semibold text-red-400 flex items-center gap-2">
@@ -148,7 +171,6 @@
             <div class="flex items-center justify-between border-b border-gray-700 pb-3 flex-wrap gap-2">
                 <h2 class="text-xl font-semibold">5. Reconcile Ledger Items</h2>
                 
-                <!-- Real-time Team Quick Selectors -->
                 {% if teams_map %}
                 <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-xs font-semibold text-gray-400 uppercase">⚡ 1-Click Team Select:</span>
@@ -233,9 +255,40 @@
         </div>
     </div>
 
+    <!-- Approval Modal for Unrecognized Contractor Names -->
+    <div id="approvalModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-gray-800 border border-gray-700 max-w-2xl w-full p-6 rounded-lg space-y-6 shadow-2xl">
+            <div class="border-b border-gray-700 pb-3 flex justify-between items-center">
+                <h3 class="text-xl font-bold text-amber-400 flex items-center gap-2">
+                    <span>⚠️</span> Approval Required: New Contractor Names
+                </h3>
+                <button type="button" onclick="closeApprovalModal()" class="text-gray-400 hover:text-white font-bold">&times;</button>
+            </div>
+
+            <p class="text-xs text-gray-300">
+                The image upload detected names not currently in your database. You can approve them as new contractors or correct any OCR typos by picking an existing name or entering a manual correction.
+            </p>
+
+            <div id="approvalRowsContainer" class="space-y-4 max-h-80 overflow-y-auto pr-2">
+                <!-- Dynamic Approval Rows Inserted Here -->
+            </div>
+
+            <div class="flex justify-end gap-3 pt-4 border-t border-gray-700">
+                <button type="button" onclick="closeApprovalModal()" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-xs rounded font-semibold text-gray-300">
+                    Cancel Upload
+                </button>
+                <button type="button" id="btnConfirmApproval" onclick="submitApprovedMappings()" class="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-xs rounded font-semibold text-white flex items-center gap-2">
+                    <span>Confirm & Save Payouts</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <script>
-        // Parse teams map from backend JSON string safely
         const teamsMap = {{ teams_json | safe }};
+        const existingContractors = {{ contractors_json | safe }};
+        
+        let pendingUploadData = null; // Stores upload payload when approval is required
 
         function setBtnLoading(btnId, isLoading, loadingText = "Processing...") {
             const btn = document.getElementById(btnId);
@@ -247,6 +300,34 @@
             } else {
                 btn.disabled = false;
                 if (btn.dataset.oldContent) btn.innerHTML = btn.dataset.oldContent;
+            }
+        }
+
+        function filterContractors() {
+            const query = document.getElementById('contractorFilter').value.toLowerCase();
+            document.querySelectorAll('.contractor-item').forEach(item => {
+                const name = item.getAttribute('data-name').toLowerCase();
+                item.style.display = name.includes(query) ? 'flex' : 'none';
+            });
+        }
+
+        async function deleteContractor(id, name) {
+            if (!confirm(`Are you sure you want to delete contractor "${name}"? This will also remove associated ledger items and team memberships.`)) return;
+
+            try {
+                const res = await fetch('/api/delete-contractor', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ contractor_id: id })
+                });
+                const data = await res.json();
+                if (res.ok && data.status === 'success') {
+                    location.reload();
+                } else {
+                    alert('Failed to delete contractor.');
+                }
+            } catch (err) {
+                alert('Network error deleting contractor.');
             }
         }
 
@@ -264,7 +345,6 @@
         }
 
         function selectTeam(teamName) {
-            // Clear existing checkbox selections
             document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
 
             if (!teamName || !teamsMap[teamName]) {
@@ -326,6 +406,9 @@
 
                 if (res.ok && data.status === 'success') {
                     window.location.href = '/?selected_week=' + encodeURIComponent(data.week_date);
+                } else if (data.status === 'approval_required') {
+                    pendingUploadData = data;
+                    showApprovalModal(data);
                 } else {
                     alert(data.message || 'Error uploading file.');
                 }
@@ -335,6 +418,106 @@
                 setBtnLoading('btnUpload', false);
             }
         };
+
+        function showApprovalModal(data) {
+            const container = document.getElementById('approvalRowsContainer');
+            container.innerHTML = '';
+
+            data.unknown_contractors.forEach((name, idx) => {
+                const row = document.createElement('div');
+                row.className = "bg-gray-900 border border-gray-700 p-3 rounded space-y-2";
+                
+                let optionsHtml = `<option value="__NEW__">➕ Add as NEW Contractor ("${name}")</option>`;
+                optionsHtml += `<option value="__MANUAL__">✏️ Type Manual Correction...</option>`;
+                optionsHtml += `<optgroup label="Map to Existing DB Contractor">`;
+                data.existing_contractors.forEach(existing => {
+                    optionsHtml += `<option value="${existing}">${existing}</option>`;
+                });
+                optionsHtml += `</optgroup>`;
+
+                row.innerHTML = `
+                    <div class="flex items-center justify-between text-xs font-semibold">
+                        <span class="text-amber-300">Detected: <strong class="text-white font-mono font-bold">${name}</strong></span>
+                        <span class="text-gray-400">Action Required</span>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <select id="actionSelect_${idx}" onchange="toggleManualInput(${idx})" class="bg-gray-800 text-xs p-2 rounded border border-gray-600 text-white" data-raw="${name}">
+                            ${optionsHtml}
+                        </select>
+                        <input type="text" id="manualInput_${idx}" placeholder="Enter correct contractor name" class="hidden bg-gray-800 text-xs p-2 rounded border border-gray-600 text-white">
+                    </div>
+                `;
+                container.appendChild(row);
+            });
+
+            document.getElementById('approvalModal').classList.remove('hidden');
+        }
+
+        function toggleManualInput(idx) {
+            const select = document.getElementById(`actionSelect_${idx}`);
+            const manualInput = document.getElementById(`manualInput_${idx}`);
+            if (select.value === '__MANUAL__') {
+                manualInput.classList.remove('hidden');
+                manualInput.focus();
+            } else {
+                manualInput.classList.add('hidden');
+            }
+        }
+
+        function closeApprovalModal() {
+            document.getElementById('approvalModal').classList.add('hidden');
+            pendingUploadData = null;
+        }
+
+        async function submitApprovedMappings() {
+            if (!pendingUploadData) return;
+
+            const mappings = {};
+            const unknownList = pendingUploadData.unknown_contractors;
+
+            for (let idx = 0; idx < unknownList.length; idx++) {
+                const rawName = unknownList[idx];
+                const select = document.getElementById(`actionSelect_${idx}`);
+                const actionVal = select.value;
+
+                if (actionVal === '__NEW__') {
+                    mappings[rawName] = rawName;
+                } else if (actionVal === '__MANUAL__') {
+                    const manualVal = document.getElementById(`manualInput_${idx}`).value.trim();
+                    if (!manualVal) {
+                        return alert(`Please enter a manual name correction for "${rawName}".`);
+                    }
+                    mappings[rawName] = manualVal;
+                } else {
+                    mappings[rawName] = actionVal;
+                }
+            }
+
+            setBtnLoading('btnConfirmApproval', true, 'Saving Ledger...');
+            try {
+                const res = await fetch('/api/confirm-upload', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        week_date: pendingUploadData.week_date,
+                        records: pendingUploadData.records,
+                        mappings: mappings,
+                        overwrite: pendingUploadData.overwrite
+                    })
+                });
+
+                const data = await res.json();
+                if (res.ok && data.status === 'success') {
+                    window.location.href = '/?selected_week=' + encodeURIComponent(data.week_date);
+                } else {
+                    alert(data.message || 'Error processing mappings.');
+                }
+            } catch (err) {
+                alert('Network error confirming upload.');
+            } finally {
+                setBtnLoading('btnConfirmApproval', false);
+            }
+        }
 
         async function deleteWeekByString(weekDate, btnId) {
             if (!weekDate) return alert('No week specified to delete.');
