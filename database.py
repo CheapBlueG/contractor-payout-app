@@ -91,3 +91,12 @@ def init_db():
 
 def get_est_now():
     return datetime.now(EST).strftime("%Y-%m-%d %H:%M:%S EST")
+
+
+def unix_to_est(unix_timestamp: int) -> str:
+    """Converts a blockchain block timestamp (unix seconds, UTC) into the
+    same EST display format used everywhere else in the ledger. Used so
+    'Paid At' reflects the moment the sender actually broadcast the
+    transaction, not the moment someone clicked 'Verify'."""
+    dt_utc = datetime.fromtimestamp(unix_timestamp, tz=pytz.UTC)
+    return dt_utc.astimezone(EST).strftime("%Y-%m-%d %H:%M:%S EST")
