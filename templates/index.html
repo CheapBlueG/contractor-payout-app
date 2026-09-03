@@ -744,12 +744,13 @@ function app() {
 
         // ---------- status helpers ----------
         isPaid(status) {
-            // Centralized, null-safe. A single row with a missing/blank
-            // status used to throw here when called as `item.status.toUpperCase()`
-            // directly — and because this logic runs inside the getter that
-            // builds the table's row list, ONE bad row could crash rendering
-            // for the whole table, making every contractor disappear.
-            return (status || '').toUpperCase().includes('PAID');
+            // Centralized, null-safe — and an EXACT match, not a substring
+            // check. "UNPAID".includes("PAID") is true (U-N-P-A-I-D really
+            // does contain "PAID"), so the old substring check flagged
+            // every row — paid or not — as paid, which hid the selection
+            // checkbox for everyone. Only these two literal values count.
+            const s = (status || '').toUpperCase();
+            return s === 'PAID' || s === 'MANUALLY_PAID';
         },
 
         // ---------- derived ----------
