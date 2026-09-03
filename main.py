@@ -47,50 +47,67 @@ def safe_json(value) -> str:
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request, selected_week: str = None):
-    ledgers, teams, contractors, weeks = [], [], [], []
+    ledgers, contractors, weeks = [], [], []
     teams_map = {}
 
+    # Each block below is independent on purpose. The previous version ran
+    # every query in one try/except, so if ANY single query failed (a bad
+    # week_date, a transient DB blip, anything) execution stopped right
+    # there and everything after it — including teams and contractors —
+    # silently stayed empty, even though that data was totally fine. Now a
+    # failure in one section can't blank out the others.
     conn = None
     try:
         conn = get_db()
         cursor = db_cursor(conn)
 
-        cursor.execute("SELECT week_date FROM weekly_ledgers GROUP BY week_date ORDER BY MAX(id) DESC")
-        weeks = [w["week_date"] for w in cursor.fetchall()]
+        try:
+            cursor.execute("SELECT week_date FROM weekly_ledgers GROUP BY week_date ORDER BY MAX(id) DESC")
+            weeks = [w["week_date"] for w in cursor.fetchall()]
+        except Exception as e:
+            print(f"Error fetching weeks: {e}")
 
         if not selected_week and weeks:
             selected_week = weeks[0]
 
         if selected_week:
+            try:
+                cursor.execute("""
+                    SELECT l.id, l.week_date, c.id as contractor_id, c.name as contractor,
+                           l.amount_owed_usd, l.status, l.paid_at_est, l.crypto_tx_id,
+                           l.crypto_symbol, l.notes
+                    FROM weekly_ledgers l
+                    JOIN contractors c ON l.contractor_id = c.id
+                    WHERE l.week_date = %s
+                    ORDER BY
+                        CASE WHEN UPPER(l.status) LIKE '%PAID%' THEN 1 ELSE 0 END ASC,
+                        c.name ASC
+                """, (selected_week,))
+                ledgers = cursor.fetchall()
+            except Exception as e:
+                print(f"Error fetching ledgers for week '{selected_week}': {e}")
+
+        try:
             cursor.execute("""
-                SELECT l.id, l.week_date, c.id as contractor_id, c.name as contractor,
-                       l.amount_owed_usd, l.status, l.paid_at_est, l.crypto_tx_id,
-                       l.crypto_symbol, l.notes
-                FROM weekly_ledgers l
-                JOIN contractors c ON l.contractor_id = c.id
-                WHERE l.week_date = %s
-                ORDER BY
-                    CASE WHEN UPPER(l.status) LIKE '%PAID%' THEN 1 ELSE 0 END ASC,
-                    c.name ASC
-            """, (selected_week,))
-            ledgers = cursor.fetchall()
+                SELECT t.name as team_name, c.name as contractor_name
+                FROM teams t
+                JOIN team_members tm ON t.id = tm.team_id
+                JOIN contractors c ON tm.contractor_id = c.id
+                ORDER BY t.name ASC, c.name ASC
+            """)
+            for row in cursor.fetchall():
+                teams_map.setdefault(row["team_name"], []).append(row["contractor_name"])
+        except Exception as e:
+            print(f"Error fetching teams: {e}")
 
-        cursor.execute("SELECT * FROM teams ORDER BY name ASC")
-        teams = cursor.fetchall()
+        try:
+            cursor.execute("SELECT id, name FROM contractors ORDER BY name ASC")
+            contractors = cursor.fetchall()
+        except Exception as e:
+            print(f"Error fetching contractors: {e}")
 
-        cursor.execute("""
-            SELECT t.name as team_name, c.name as contractor_name
-            FROM teams t
-            JOIN team_members tm ON t.id = tm.team_id
-            JOIN contractors c ON tm.contractor_id = c.id
-        """)
-        for row in cursor.fetchall():
-            teams_map.setdefault(row["team_name"], []).append(row["contractor_name"])
-
-        cursor.execute("SELECT * FROM contractors ORDER BY name ASC")
-        contractors = cursor.fetchall()
     except Exception as e:
-        print(f"Error fetching index data: {e}")
+        print(f"Error connecting to database: {e}")
     finally:
         if conn:
             conn.close()
