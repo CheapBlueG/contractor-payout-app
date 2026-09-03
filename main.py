@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request, File, UploadFile, Form, Body
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from database import init_db, get_db, get_est_now
+from database import init_db, get_db, get_est_now, unix_to_est
 from crypto_service import extract_tx_hash, verify_and_price_tx, get_current_price_usd
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -466,12 +466,20 @@ async def reconcile_crypto(
         tolerance = max(1.0, total_owed * 0.01)
 
         if abs(tx_usd_val - total_owed) <= tolerance:
-            now_est = get_est_now()
+            # Log the moment the funds actually left the sender's wallet
+            # (the tx's own block timestamp), not the moment someone
+            # clicked "Verify" — a slow reconciler shouldn't make the
+            # sender look late.
+            if verification.get("timestamp"):
+                paid_at_est = unix_to_est(verification["timestamp"])
+            else:
+                paid_at_est = get_est_now()
+
             cursor.execute(f"""
                 UPDATE weekly_ledgers
                 SET status = 'PAID', paid_at_est = %s, crypto_tx_id = %s, crypto_symbol = %s
                 WHERE id IN ({placeholders})
-            """, [now_est, clean_hash, symbol.upper()] + ledger_ids)
+            """, [paid_at_est, clean_hash, symbol.upper()] + ledger_ids)
             conn.commit()
             return {
                 "status": "matched",
@@ -481,6 +489,7 @@ async def reconcile_crypto(
                 "confirmations": verification["confirmations"],
                 "explorer_url": verification["explorer_url"],
                 "tx_hash": verification["tx_hash"],
+                "paid_at_est": paid_at_est,
             }
         else:
             return {
