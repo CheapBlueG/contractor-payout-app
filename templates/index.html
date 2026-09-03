@@ -26,13 +26,25 @@
             </form>
         </div>
 
-        <!-- 2. Create Team Group Section -->
+        <!-- 2. Create Team Group Section with Pre-Select Dropdown -->
         <div class="bg-gray-800 p-6 rounded-lg border border-gray-700 space-y-4">
             <h2 class="text-xl font-semibold">2. Create Team Group</h2>
-            <div class="flex flex-wrap gap-4 items-center">
-                <input type="text" id="teamName" placeholder="Team Name (e.g. Team Alpha)" class="bg-gray-700 p-2 rounded text-sm border border-gray-600 w-64">
-                <input type="text" id="teamMembers" placeholder="Contractor Names (comma separated: bob, rob, tom)" class="bg-gray-700 p-2 rounded text-sm border border-gray-600 w-96">
-                <button onclick="createTeam()" class="bg-indigo-600 px-4 py-2 rounded text-sm hover:bg-indigo-500">Create Team</button>
+            <div class="flex flex-wrap gap-4 items-start">
+                <div>
+                    <label class="block text-xs text-gray-400 mb-1">Team Name:</label>
+                    <input type="text" id="teamName" placeholder="e.g. Team Alpha" class="bg-gray-700 p-2 rounded text-sm border border-gray-600 w-64">
+                </div>
+
+                <div>
+                    <label class="block text-xs text-gray-400 mb-1">Select Contractors (Hold Ctrl/Cmd to select multiple):</label>
+                    <select id="teamMembers" multiple class="bg-gray-700 p-2 rounded text-sm border border-gray-600 w-80 h-32 text-white">
+                        {% for c in contractors %}
+                            <option value="{{ c.name }}">{{ c.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <button onclick="createTeam()" class="bg-indigo-600 px-4 py-2 rounded text-sm hover:bg-indigo-500 self-end mb-1">Create Team</button>
             </div>
             {% if teams %}
             <div class="text-xs text-gray-400 mt-2">
@@ -163,18 +175,17 @@
 
         async function createTeam() {
             const teamName = document.getElementById('teamName').value.trim();
-            const membersRaw = document.getElementById('teamMembers').value.trim();
+            const selectElement = document.getElementById('teamMembers');
+            const selectedMembers = Array.from(selectElement.selectedOptions).map(opt => opt.value);
             
-            if (!teamName || !membersRaw) {
-                return alert('Please enter both a team name and contractor names.');
+            if (!teamName || !selectedMembers.length) {
+                return alert('Please enter a team name and select at least one contractor.');
             }
-
-            const members = membersRaw.split(',').map(m => m.trim()).filter(m => m.length > 0);
 
             const res = await fetch('/api/teams', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ team_name: teamName, contractor_names: members })
+                body: JSON.stringify({ team_name: teamName, contractor_names: selectedMembers })
             });
 
             const data = await res.json();
