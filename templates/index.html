@@ -518,7 +518,7 @@
                                 <td>
                                     <input type="checkbox" :value="item.id" :checked="selectedIds.includes(item.id)"
                                            @change="toggleSelect(item.id, $event.target.checked)"
-                                           x-show="!item.status.toUpperCase().includes('PAID')">
+                                           x-show="!isPaid(item.status)">
                                 </td>
                                 <td x-text="item.id"></td>
                                 <td>
@@ -529,7 +529,7 @@
                                 <td>
                                     <span class="badge badge-paid" x-show="item.status === 'PAID'">PAID</span>
                                     <span class="badge badge-manual" x-show="item.status === 'MANUALLY_PAID'">MANUAL</span>
-                                    <span class="badge badge-unpaid" x-show="!item.status.toUpperCase().includes('PAID')">UNPAID</span>
+                                    <span class="badge badge-unpaid" x-show="!isPaid(item.status)">UNPAID</span>
                                 </td>
                                 <td style="font-size: 12px; color: var(--text-muted);" x-text="item.paid_at_est || '-'"></td>
                                 <td style="font-size: 12px;">
@@ -742,14 +742,24 @@ function app() {
             setTimeout(() => { this.toasts = this.toasts.filter(t => t.id !== id); }, 5000);
         },
 
+        // ---------- status helpers ----------
+        isPaid(status) {
+            // Centralized, null-safe. A single row with a missing/blank
+            // status used to throw here when called as `item.status.toUpperCase()`
+            // directly — and because this logic runs inside the getter that
+            // builds the table's row list, ONE bad row could crash rendering
+            // for the whole table, making every contractor disappear.
+            return (status || '').toUpperCase().includes('PAID');
+        },
+
         // ---------- derived ----------
         get filteredLedgers() {
             let rows = this.ledgers.slice();
 
             if (this.filters.status === 'unpaid') {
-                rows = rows.filter(r => !r.status.toUpperCase().includes('PAID'));
+                rows = rows.filter(r => !this.isPaid(r.status));
             } else if (this.filters.status === 'paid') {
-                rows = rows.filter(r => r.status.toUpperCase().includes('PAID'));
+                rows = rows.filter(r => this.isPaid(r.status));
             }
 
             if (this.filters.team) {
@@ -781,7 +791,7 @@ function app() {
             return this.ledgers.reduce((sum, r) => sum + Number(r.amount_owed_usd), 0);
         },
         get totalPaid() {
-            return this.ledgers.filter(r => r.status.toUpperCase().includes('PAID'))
+            return this.ledgers.filter(r => this.isPaid(r.status))
                 .reduce((sum, r) => sum + Number(r.amount_owed_usd), 0);
         },
         get totalUnpaid() {
@@ -821,7 +831,7 @@ function app() {
         },
         selectAll(checked) {
             if (checked) {
-                const ids = this.filteredLedgers.filter(r => !r.status.toUpperCase().includes('PAID')).map(r => r.id);
+                const ids = this.filteredLedgers.filter(r => !this.isPaid(r.status)).map(r => r.id);
                 this.selectedIds = Array.from(new Set([...this.selectedIds, ...ids]));
             } else {
                 this.selectedIds = [];
