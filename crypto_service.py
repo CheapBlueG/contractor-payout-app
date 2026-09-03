@@ -4,7 +4,7 @@ import requests
 ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY", "")
 LTC_API_KEY = os.getenv("LTC_API_KEY", os.getenv("BLOCKCYPHER_API_KEY", ""))
 
-# Receiving Wallet Addresses
+# Designated Receiving Wallet Addresses
 BTC_RECEIVING_ADDRESS = os.getenv("BTC_RECEIVING_ADDRESS", "bc1qq2xjkur4jkn76g3v7hwtx94r2733l8hr9yfdem").strip()
 LTC_RECEIVING_ADDRESS = os.getenv("LTC_RECEIVING_ADDRESS", "LSzh8EETPhDd7xMaxVu9gYZ8Sa3ucwVphg").strip()
 ETH_RECEIVING_ADDRESS = os.getenv("ETH_RECEIVING_ADDRESS", "0x67803EfDf6EfBcE405275F42242f5f617FAf9194").strip()
@@ -12,7 +12,8 @@ ETH_RECEIVING_ADDRESS = os.getenv("ETH_RECEIVING_ADDRESS", "0x67803EfDf6EfBcE405
 def verify_eth_tx(tx_id: str):
     """
     Verifies an Ethereum transaction hash via Etherscan API.
-    Supports native ETH transfers and standard ERC-20 token transfers.
+    Supports direct native ETH transfers and standard ERC-20 token transfers.
+    Calculates transferred value sent specifically to the designated target address.
     """
     clean_tx = tx_id.strip()
     if not clean_tx or not clean_tx.startswith("0x") or len(clean_tx) != 66:
@@ -40,7 +41,7 @@ def verify_eth_tx(tx_id: str):
 
     amount_eth = 0.0
 
-    # Case 1: Direct/Native ETH Transfer
+    # Case 1: Direct Native ETH Transfer
     if tx_to == target_addr:
         value_wei_hex = result.get("value", "0x0")
         try:
@@ -49,11 +50,11 @@ def verify_eth_tx(tx_id: str):
         except ValueError:
             raise ValueError("Failed to parse Ethereum transaction transfer value.")
 
-    # Case 2: ERC-20 Token Transfer
+    # Case 2: ERC-20 Token Transfer (method signature 0xa9059cbb = transfer(address,uint256))
     elif input_data.startswith("0xa9059cbb") and len(input_data) >= 138:
         recipient_hex = "0x" + input_data[34:74].lower()
         if recipient_hex != target_addr:
-            raise ValueError(f"ERC-20 transfer target ('{recipient_hex}') does not match wallet '{ETH_RECEIVING_ADDRESS}'.")
+            raise ValueError(f"ERC-20 transfer target ('{recipient_hex}') does not match designated wallet '{ETH_RECEIVING_ADDRESS}'.")
 
         value_hex = "0x" + input_data[74:138]
         try:
@@ -85,7 +86,7 @@ def verify_eth_tx(tx_id: str):
 def verify_btc_tx(tx_id: str):
     """
     Verifies a Bitcoin (BTC) transaction hash via Blockstream Esplora API.
-    Filters outputs to sum only Satoshis sent to target receiving address.
+    Inspects transaction vouts and sums only Satoshis sent to target receiving address.
     """
     clean_tx = tx_id.strip()
     if not clean_tx or len(clean_tx) != 64:
@@ -112,7 +113,7 @@ def verify_btc_tx(tx_id: str):
     )
 
     if matched_satoshis == 0:
-        raise ValueError(f"No outputs found sent to address '{BTC_RECEIVING_ADDRESS}' in this transaction.")
+        raise ValueError(f"No outputs found sent to target address '{BTC_RECEIVING_ADDRESS}' in this transaction.")
 
     amount_btc = matched_satoshis / 1e8
     timestamp = data.get("status", {}).get("block_time")
@@ -121,7 +122,7 @@ def verify_btc_tx(tx_id: str):
 def verify_ltc_tx(tx_id: str):
     """
     Verifies a Litecoin (LTC) transaction hash.
-    Filters outputs to sum only Litoshis sent to target receiving address.
+    Inspects outputs and sums only Litoshis sent to target receiving address.
     """
     clean_tx = tx_id.strip()
     if not clean_tx or len(clean_tx) != 64:
