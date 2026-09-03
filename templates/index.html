@@ -4,14 +4,29 @@
     <meta charset="UTF-8">
     <title>Contractor Payout Reconciliation</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .spinner {
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            width: 1rem;
+            height: 1rem;
+            animation: spin 0.8s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
 </head>
 <body class="bg-gray-900 text-gray-100 p-8">
     <div class="max-w-6xl mx-auto space-y-8">
         <h1 class="text-3xl font-bold border-b border-gray-700 pb-4">Weekly Contractor Payout Portal</h1>
 
-        <!-- 1. File Upload Section with Date Range -->
+        <!-- 1. File Upload Section -->
         <div class="bg-gray-800 p-6 rounded-lg border border-gray-700">
-            <h2 class="text-xl font-semibold mb-4">1. Upload Weekly Screenshot</h2>
+            <h2 class="text-xl font-semibold mb-4 text-blue-400">1. Upload Weekly Screenshot</h2>
             <form id="uploadForm" class="flex flex-wrap items-center gap-4">
                 <div class="flex items-center gap-2">
                     <label class="text-xs text-gray-400">Start Date:</label>
@@ -22,13 +37,63 @@
                     <input type="date" id="endDate" required class="bg-gray-700 p-2 rounded text-white border border-gray-600 text-sm">
                 </div>
                 <input type="file" id="imageFile" accept="image/*" required class="text-sm">
-                <button type="submit" class="bg-blue-600 px-4 py-2 rounded text-sm hover:bg-blue-500 font-medium">Upload & Parse</button>
+                
+                <div class="flex items-center gap-2 bg-gray-750 px-3 py-2 rounded border border-gray-600">
+                    <input type="checkbox" id="overwriteCheck" class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-600 cursor-pointer">
+                    <label for="overwriteCheck" class="text-xs text-gray-300 cursor-pointer font-medium">Overwrite if week exists</label>
+                </div>
+
+                <button type="submit" id="btnUpload" class="bg-blue-600 hover:bg-blue-500 px-5 py-2 rounded text-sm font-semibold transition-all flex items-center gap-2">
+                    <span>Upload & Parse</span>
+                </button>
             </form>
         </div>
 
-        <!-- 2. Create Team Group Section with Pre-Select Dropdown -->
+        <!-- 2. Dedicated Delete Manager Section -->
+        <div class="bg-red-950/30 p-6 rounded-lg border border-red-800/60 space-y-4">
+            <h2 class="text-xl font-semibold text-red-400 flex items-center gap-2">
+                <span>🗑️</span> Delete Week Data
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Method A: Quick Delete Selected Week -->
+                <div class="bg-gray-800/80 p-4 rounded border border-gray-700 flex flex-col justify-between space-y-3">
+                    <div>
+                        <span class="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Option A: Delete Focused Week</span>
+                        <p class="text-xs text-gray-300">Deletes entries for the week currently chosen in the dropdown filter below.</p>
+                    </div>
+                    <div class="flex items-center justify-between gap-2 bg-gray-900 p-2 rounded border border-gray-700">
+                        <span class="text-sm font-mono text-blue-300 font-bold truncate">
+                            {{ selected_week or 'No Week Selected' }}
+                        </span>
+                        {% if selected_week %}
+                        <button id="btnDeleteSelected" onclick="deleteWeekByString('{{ selected_week }}', 'btnDeleteSelected')" class="bg-red-700 hover:bg-red-600 text-white text-xs px-3 py-2 rounded font-bold transition-all shrink-0 flex items-center gap-2">
+                            <span>Delete Selected</span>
+                        </button>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Method B: Delete by Custom Range -->
+                <div class="bg-gray-800/80 p-4 rounded border border-gray-700 flex flex-col justify-between space-y-3">
+                    <div>
+                        <span class="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Option B: Select Date Range to Delete</span>
+                        <p class="text-xs text-gray-300">Pick a Start and End date matching the week range you wish to clear.</p>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2 bg-gray-900 p-2 rounded border border-gray-700">
+                        <input type="date" id="delStartDate" class="bg-gray-700 p-1.5 rounded text-white border border-gray-600 text-xs">
+                        <span class="text-xs text-gray-400">to</span>
+                        <input type="date" id="delEndDate" class="bg-gray-700 p-1.5 rounded text-white border border-gray-600 text-xs">
+                        <button id="btnDeleteRange" onclick="deleteWeekByRange()" class="bg-red-700 hover:bg-red-600 text-white text-xs px-3 py-2 rounded font-bold transition-all shrink-0 flex items-center gap-2 ml-auto">
+                            <span>Delete Range</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. Create Team Group Section -->
         <div class="bg-gray-800 p-6 rounded-lg border border-gray-700 space-y-4">
-            <h2 class="text-xl font-semibold">2. Create Team Group</h2>
+            <h2 class="text-xl font-semibold">3. Create Team Group</h2>
             <div class="flex flex-wrap gap-4 items-start">
                 <div>
                     <label class="block text-xs text-gray-400 mb-1">Team Name:</label>
@@ -36,15 +101,17 @@
                 </div>
 
                 <div>
-                    <label class="block text-xs text-gray-400 mb-1">Select Contractors (Hold Ctrl/Cmd to select multiple):</label>
-                    <select id="teamMembers" multiple class="bg-gray-700 p-2 rounded text-sm border border-gray-600 w-80 h-32 text-white">
+                    <label class="block text-xs text-gray-400 mb-1">Select Contractors (Hold Ctrl/Cmd):</label>
+                    <select id="teamMembers" multiple class="bg-gray-700 p-2 rounded text-sm border border-gray-600 w-80 h-28 text-white">
                         {% for c in contractors %}
                             <option value="{{ c.name }}">{{ c.name }}</option>
                         {% endfor %}
                     </select>
                 </div>
 
-                <button onclick="createTeam()" class="bg-indigo-600 px-4 py-2 rounded text-sm hover:bg-indigo-500 self-end mb-1">Create Team</button>
+                <button id="btnCreateTeam" onclick="createTeam()" class="bg-indigo-600 px-4 py-2 rounded text-sm hover:bg-indigo-500 self-end mb-1 font-semibold transition-all flex items-center gap-2">
+                    <span>Create Team</span>
+                </button>
             </div>
             {% if teams %}
             <div class="text-xs text-gray-400 mt-2">
@@ -56,9 +123,27 @@
             {% endif %}
         </div>
 
-        <!-- 3. Reconciliation Action Bar -->
+        <!-- 4. Week Selection Focus Bar -->
+        <div class="flex items-center justify-between bg-gray-800 p-4 rounded-lg border border-gray-700">
+            <div class="flex items-center gap-3">
+                <label class="font-semibold text-lg text-white">Focus Week Range:</label>
+                <select id="weekSelect" onchange="window.location.href='/?selected_week=' + encodeURIComponent(this.value)" class="bg-gray-700 text-blue-400 font-mono font-semibold p-2 rounded border border-gray-600 text-sm cursor-pointer">
+                    {% if not weeks %}
+                        <option value="">No Uploaded Weeks Available</option>
+                    {% endif %}
+                    {% for w in weeks %}
+                        <option value="{{ w }}" {% if w == selected_week %}selected{% endif %}>{{ w }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% if selected_week %}
+            <span class="text-xs text-gray-400">Showing <strong class="text-white">{{ ledgers|length }}</strong> contractor entries for <span class="text-blue-300 font-mono">{{ selected_week }}</span></span>
+            {% endif %}
+        </div>
+
+        <!-- 5. Reconciliation Action Bar -->
         <div class="bg-gray-800 p-6 rounded-lg border border-gray-700 space-y-4">
-            <h2 class="text-xl font-semibold">3. Reconcile Selected Ledger Items</h2>
+            <h2 class="text-xl font-semibold">5. Reconcile Selected Ledger Items</h2>
             <div class="flex flex-wrap gap-4 items-center">
                 <p class="font-medium text-lg">Total Owed: <span id="selectedSum" class="text-green-400 font-bold">$0.00</span></p>
 
@@ -69,14 +154,18 @@
                         <option value="BTC">BTC</option>
                         <option value="LTC">LTC</option>
                     </select>
-                    <button onclick="reconcileCrypto()" class="bg-emerald-600 px-4 py-2 rounded text-sm hover:bg-emerald-500">Verify & Pay</button>
+                    <button id="btnReconcile" onclick="reconcileCrypto()" class="bg-emerald-600 px-4 py-2 rounded text-sm hover:bg-emerald-500 font-semibold transition-all flex items-center gap-2">
+                        <span>Verify & Pay</span>
+                    </button>
                 </div>
 
                 <div class="border-l border-gray-600 h-8 mx-2"></div>
 
                 <div class="flex items-center gap-2">
                     <input type="text" id="manualNotes" placeholder="Optional Notes" class="bg-gray-700 p-2 rounded text-sm border border-gray-600">
-                    <button onclick="markManual()" class="bg-amber-600 px-4 py-2 rounded text-sm hover:bg-amber-500">Mark Paid Manually</button>
+                    <button id="btnMarkManual" onclick="markManual()" class="bg-amber-600 px-4 py-2 rounded text-sm hover:bg-amber-500 font-semibold transition-all flex items-center gap-2">
+                        <span>Mark Paid Manually</span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -117,6 +206,10 @@
                         <td class="p-3 text-xs text-gray-400">{{ row.paid_at_est or '-' }}</td>
                         <td class="p-3 text-xs font-mono truncate max-w-xs">{{ row.crypto_tx_id or row.notes or '-' }}</td>
                     </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" class="p-6 text-center text-gray-500">No ledger records found for this week.</td>
+                    </tr>
                     {% endfor %}
                 </tbody>
             </table>
@@ -124,6 +217,19 @@
     </div>
 
     <script>
+        function setBtnLoading(btnId, isLoading, loadingText = "Processing...") {
+            const btn = document.getElementById(btnId);
+            if (!btn) return;
+            if (isLoading) {
+                btn.disabled = true;
+                btn.dataset.oldContent = btn.innerHTML;
+                btn.innerHTML = `<span class="spinner"></span> <span>${loadingText}</span>`;
+            } else {
+                btn.disabled = false;
+                if (btn.dataset.oldContent) btn.innerHTML = btn.dataset.oldContent;
+            }
+        }
+
         function updateSum() {
             let total = 0;
             document.querySelectorAll('.row-checkbox:checked').forEach(cb => {
@@ -141,37 +247,86 @@
             return Array.from(document.querySelectorAll('.row-checkbox:checked')).map(cb => parseInt(cb.value));
         }
 
+        // Deterministic date range formatter (prevents UTC/Local timezone shifts)
         function formatDateRange(startStr, endStr) {
-            const start = new Date(startStr + 'T00:00:00');
-            const end = new Date(endStr + 'T00:00:00');
+            const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+            const [sYear, sMonth, sDay] = startStr.split('-');
+            const [eYear, eMonth, eDay] = endStr.split('-');
             
-            const options = { month: 'short', day: 'numeric' };
-            const startFormatted = start.toLocaleDateString('en-US', options);
-            const endFormatted = end.toLocaleDateString('en-US', options);
-            const year = end.getFullYear();
+            const startFormatted = `${months[parseInt(sMonth) - 1]} ${parseInt(sDay)}`;
+            const endFormatted = `${months[parseInt(eMonth) - 1]} ${parseInt(eDay)}`;
 
-            return `${startFormatted} - ${endFormatted}, ${year}`;
+            return `${startFormatted} - ${endFormatted}, ${eYear}`;
         }
 
         document.getElementById('uploadForm').onsubmit = async (e) => {
             e.preventDefault();
             const startVal = document.getElementById('startDate').value;
             const endVal = document.getElementById('endDate').value;
+            const overwrite = document.getElementById('overwriteCheck').checked;
             
-            if (!startVal || !endVal) {
-                return alert('Please select both a Start Date and End Date.');
-            }
+            if (!startVal || !endVal) return alert('Please select both a Start Date and End Date.');
 
             const rangeString = formatDateRange(startVal, endVal);
-
             const formData = new FormData();
             formData.append('week_date', rangeString);
             formData.append('file', document.getElementById('imageFile').files[0]);
+            formData.append('overwrite', overwrite);
             
-            const res = await fetch('/api/upload', { method: 'POST', body: formData });
-            const data = await res.json();
-            if(data.status === 'success') location.reload();
+            setBtnLoading('btnUpload', true, 'Parsing Image...');
+            try {
+                const res = await fetch('/api/upload', { method: 'POST', body: formData });
+                const data = await res.json();
+
+                if (res.ok && data.status === 'success') {
+                    window.location.href = '/?selected_week=' + encodeURIComponent(data.week_date);
+                } else {
+                    alert(data.message || 'Error uploading file.');
+                }
+            } catch (err) {
+                alert('Network error uploading file.');
+            } finally {
+                setBtnLoading('btnUpload', false);
+            }
         };
+
+        async function deleteWeekByString(weekDate, btnId) {
+            if (!weekDate) return alert('No week specified to delete.');
+            if (!confirm(`Are you sure you want to delete all entries for "${weekDate}"? This action cannot be undone.`)) return;
+
+            setBtnLoading(btnId, true, 'Deleting...');
+            try {
+                const res = await fetch('/api/delete-week', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ week_date: weekDate })
+                });
+
+                const data = await res.json();
+                if (res.ok && data.status === 'success') {
+                    alert(`Data for "${weekDate}" deleted successfully.`);
+                    window.location.href = '/';
+                } else {
+                    alert(data.message || 'Failed to delete week.');
+                }
+            } catch (err) {
+                alert('Network error deleting week.');
+            } finally {
+                setBtnLoading(btnId, false);
+            }
+        }
+
+        function deleteWeekByRange() {
+            const startVal = document.getElementById('delStartDate').value;
+            const endVal = document.getElementById('delEndDate').value;
+
+            if (!startVal || !endVal) {
+                return alert('Please select both a Start Date and End Date to delete.');
+            }
+
+            const rangeString = formatDateRange(startVal, endVal);
+            deleteWeekByString(rangeString, 'btnDeleteRange');
+        }
 
         async function createTeam() {
             const teamName = document.getElementById('teamName').value.trim();
@@ -182,18 +337,25 @@
                 return alert('Please enter a team name and select at least one contractor.');
             }
 
-            const res = await fetch('/api/teams', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ team_name: teamName, contractor_names: selectedMembers })
-            });
+            setBtnLoading('btnCreateTeam', true, 'Creating...');
+            try {
+                const res = await fetch('/api/teams', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ team_name: teamName, contractor_names: selectedMembers })
+                });
 
-            const data = await res.json();
-            if (data.status === 'success') {
-                alert(`Team "${teamName}" created successfully!`);
-                location.reload();
-            } else {
-                alert('Failed to create team.');
+                const data = await res.json();
+                if (data.status === 'success') {
+                    alert(`Team "${teamName}" created successfully!`);
+                    location.reload();
+                } else {
+                    alert('Failed to create team.');
+                }
+            } catch (err) {
+                alert('Network error creating team.');
+            } finally {
+                setBtnLoading('btnCreateTeam', false);
             }
         }
 
@@ -203,17 +365,24 @@
             const symbol = document.getElementById('cryptoSymbol').value;
             if(!ids.length || !txId) return alert('Select items and enter TxID');
 
-            const res = await fetch('/api/reconcile-crypto', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ ledger_ids: ids, tx_id: txId, symbol: symbol })
-            });
-            const data = await res.json();
-            if(data.status === 'matched') {
-                alert('Successfully matched and marked paid!');
-                location.reload();
-            } else {
-                alert(`Mismatch! Total Owed: $${data.total_owed}, Tx Value: $${data.received_usd}`);
+            setBtnLoading('btnReconcile', true, 'Verifying...');
+            try {
+                const res = await fetch('/api/reconcile-crypto', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ ledger_ids: ids, tx_id: txId, symbol: symbol })
+                });
+                const data = await res.json();
+                if(data.status === 'matched') {
+                    alert('Successfully matched and marked paid!');
+                    location.reload();
+                } else {
+                    alert(`Mismatch! Total Owed: $${data.total_owed}, Tx Value: $${data.received_usd}`);
+                }
+            } catch (err) {
+                alert('Network error reconciling transaction.');
+            } finally {
+                setBtnLoading('btnReconcile', false);
             }
         }
 
@@ -222,13 +391,20 @@
             const notes = document.getElementById('manualNotes').value;
             if(!ids.length) return alert('Select items to mark paid');
 
-            const res = await fetch('/api/mark-paid-manual', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ ledger_ids: ids, notes: notes })
-            });
-            const data = await res.json();
-            if(data.status === 'success') location.reload();
+            setBtnLoading('btnMarkManual', true, 'Updating...');
+            try {
+                const res = await fetch('/api/mark-paid-manual', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ ledger_ids: ids, notes: notes })
+                });
+                const data = await res.json();
+                if(data.status === 'success') location.reload();
+            } catch (err) {
+                alert('Network error updating entries.');
+            } finally {
+                setBtnLoading('btnMarkManual', false);
+            }
         }
     </script>
 </body>
