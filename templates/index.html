@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Contractor Ledger & Crypto Reconciliation</title>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.13.5/cdn.min.js"></script>
     <style>
         :root {
             --bg-main: #f8fafc;
@@ -19,6 +20,8 @@
             --warning: #d97706;
         }
 
+        * { box-sizing: border-box; }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             background-color: var(--bg-main);
@@ -27,15 +30,16 @@
             padding: 24px;
         }
 
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-        }
+        [x-cloak] { display: none !important; }
+
+        .container { max-width: 1400px; margin: 0 auto; }
 
         .header {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
             margin-bottom: 24px;
             background: var(--card-bg);
             padding: 20px 24px;
@@ -43,22 +47,20 @@
             border: 1px solid var(--border-color);
         }
 
-        .header h1 {
-            margin: 0;
-            font-size: 22px;
-            font-weight: 700;
-        }
+        .header h1 { margin: 0; font-size: 22px; font-weight: 700; }
 
-        .week-selector {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
+        .week-selector { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 
         .grid {
             display: grid;
-            grid-template-columns: 360px 1fr;
+            grid-template-columns: minmax(280px, 360px) 1fr;
             gap: 24px;
+        }
+
+        @media (max-width: 900px) {
+            body { padding: 12px; }
+            .grid { grid-template-columns: 1fr; }
+            .header { padding: 16px; }
         }
 
         .card {
@@ -77,9 +79,7 @@
             color: var(--text-main);
         }
 
-        .form-group {
-            margin-bottom: 14px;
-        }
+        .form-group { margin-bottom: 14px; }
 
         label {
             display: block;
@@ -100,9 +100,7 @@
             color: var(--text-main);
         }
 
-        input[type="checkbox"] {
-            cursor: pointer;
-        }
+        input[type="checkbox"] { cursor: pointer; }
 
         .checkbox-label {
             display: flex;
@@ -113,6 +111,8 @@
             color: var(--text-main);
             cursor: pointer;
         }
+
+        .hint { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
 
         .btn {
             background: var(--primary);
@@ -133,9 +133,7 @@
         .btn:hover { background: var(--primary-hover); }
         .btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
-        .btn-danger {
-            background: var(--danger);
-        }
+        .btn-danger { background: var(--danger); }
         .btn-danger:hover { background: var(--danger-hover); }
 
         .btn-secondary {
@@ -145,27 +143,17 @@
         }
         .btn-secondary:hover { background: #e2e8f0; }
 
-        .btn-sm {
-            padding: 6px 10px;
-            font-size: 12px;
-            width: auto;
+        .btn-sm { padding: 6px 10px; font-size: 12px; width: auto; }
+        .btn-link {
+            background: none; border: none; padding: 0; width: auto;
+            color: var(--primary); text-decoration: underline; cursor: pointer; font-size: inherit;
         }
 
-        .table-container {
-            overflow-x: auto;
-        }
+        .table-container { overflow-x: auto; }
 
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 14px;
-            text-align: left;
-        }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; text-align: left; }
 
-        th, td {
-            padding: 12px 14px;
-            border-bottom: 1px solid var(--border-color);
-        }
+        th, td { padding: 12px 14px; border-bottom: 1px solid var(--border-color); white-space: nowrap; }
 
         th {
             background: #f8fafc;
@@ -174,11 +162,13 @@
             font-size: 12px;
             text-transform: uppercase;
             letter-spacing: 0.05em;
+            cursor: pointer;
+            user-select: none;
         }
+        th.sortable:hover { color: var(--text-main); }
+        th .arrow { font-size: 10px; margin-left: 3px; opacity: 0.6; }
 
-        tr:hover {
-            background: #fafafa;
-        }
+        tr:hover { background: #fafafa; }
 
         .badge {
             display: inline-block;
@@ -192,15 +182,60 @@
         .badge-unpaid { background: #fee2e2; color: #991b1b; }
         .badge-paid { background: #dcfce7; color: #166534; }
         .badge-manual { background: #fef3c7; color: #92400e; }
+        .badge-confirm { background: #e0e7ff; color: #3730a3; }
+
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 14px;
+        }
+
+        .toolbar input[type="text"] { width: 200px; }
+        .toolbar select { width: auto; }
+
+        .teams-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
+
+        .team-chip {
+            background: #e2e8f0;
+            border: none;
+            padding: 5px 12px;
+            border-radius: 16px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            color: #334155;
+        }
+        .team-chip:hover { background: #cbd5e1; }
+        .team-chip.active { background: var(--primary); color: #fff; }
+
+        .selection-bar {
+            position: sticky;
+            bottom: 0;
+            background: #0f172a;
+            color: #fff;
+            border-radius: 10px;
+            padding: 14px 18px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 16px;
+        }
+        .selection-bar strong { font-size: 15px; }
+        .selection-bar .muted { color: #94a3b8; font-size: 12px; }
 
         .modal-overlay {
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(15, 23, 42, 0.5);
-            display: none;
+            display: flex;
             justify-content: center;
             align-items: center;
             z-index: 1000;
+            padding: 16px;
         }
 
         .modal {
@@ -214,13 +249,7 @@
             overflow-y: auto;
         }
 
-        .modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 16px;
-        }
-
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
         .modal-header h3 { margin: 0; }
 
         .mapping-row {
@@ -231,11 +260,7 @@
             margin-bottom: 10px;
         }
 
-        .flex-actions {
-            display: flex;
-            gap: 10px;
-            margin-top: 14px;
-        }
+        .flex-actions { display: flex; gap: 10px; margin-top: 14px; }
 
         .contractor-tag {
             display: inline-flex;
@@ -247,38 +272,63 @@
             font-size: 12px;
             margin: 2px;
         }
-
-        .contractor-tag span {
-            cursor: pointer;
-            color: var(--danger);
-            font-weight: bold;
+        .contractor-tag button {
+            background: none; border: none; padding: 0; cursor: pointer;
+            color: var(--danger); font-weight: bold; font-size: 12px;
         }
+        .contractor-tag .link { cursor: pointer; color: var(--primary); text-decoration: underline; }
 
-        .teams-bar {
+        .dropzone {
+            border: 2px dashed var(--border-color);
+            border-radius: 8px;
+            padding: 18px;
+            text-align: center;
+            font-size: 13px;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s;
+        }
+        .dropzone.dragover { border-color: var(--primary); background: #eff6ff; color: var(--primary); }
+        .dropzone img { max-width: 100%; max-height: 140px; border-radius: 6px; margin-bottom: 8px; }
+
+        .toast-stack {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
             display: flex;
+            flex-direction: column;
             gap: 8px;
+            z-index: 2000;
+            max-width: 360px;
+        }
+        .toast {
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            box-shadow: 0 10px 15px -3px rgba(0,0,0,0.15);
+            color: #fff;
+        }
+        .toast-success { background: var(--success); }
+        .toast-error { background: var(--danger); }
+        .toast-info { background: #334155; }
+
+        .summary-strip {
+            display: flex;
+            gap: 20px;
             flex-wrap: wrap;
-            margin-bottom: 14px;
-            align-items: center;
+            margin-bottom: 16px;
+            font-size: 13px;
         }
+        .summary-strip .stat { color: var(--text-muted); }
+        .summary-strip .stat strong { color: var(--text-main); font-size: 15px; display: block; }
 
-        .team-chip {
-            background: #e2e8f0;
-            border: none;
-            padding: 5px 12px;
-            border-radius: 16px;
-            font-size: 12px;
-            font-weight: 600;
-            cursor: pointer;
-            color: #334155;
-        }
+        .estimate-note { font-size: 11px; color: var(--text-muted); margin-top: 8px; line-height: 1.4; }
 
-        .team-chip:hover {
-            background: #cbd5e1;
-        }
+        a.explorer-link { color: var(--primary); text-decoration: none; }
+        a.explorer-link:hover { text-decoration: underline; }
     </style>
 </head>
-<body>
+<body x-data="app()" x-init="init()">
 
 <div class="container">
     <!-- Top Header -->
@@ -292,14 +342,13 @@
 
         <div class="week-selector">
             <label for="weekSelect" style="margin: 0;">Week Range:</label>
-            <select id="weekSelect" style="width: auto;" onchange="changeWeek(this.value)">
-                {% for w in weeks %}
-                    <option value="{{ w }}" {% if w == selected_week %}selected{% endif %}>{{ w }}</option>
-                {% endfor %}
+            <select id="weekSelect" style="width: auto;" x-model="selectedWeek" @change="loadWeek(selectedWeek)">
+                <template x-for="w in weeks" :key="w">
+                    <option :value="w" x-text="w"></option>
+                </template>
             </select>
-            {% if selected_week %}
-                <button class="btn btn-danger btn-sm" onclick="deleteCurrentWeek()">Delete Week</button>
-            {% endif %}
+            <a class="btn btn-secondary btn-sm" :href="'/api/export-csv?week_date=' + encodeURIComponent(selectedWeek)" x-show="selectedWeek">Export CSV</a>
+            <button class="btn btn-danger btn-sm" @click="deleteCurrentWeek()" x-show="selectedWeek">Delete Week</button>
         </div>
     </div>
 
@@ -309,23 +358,34 @@
             <!-- Image Upload Card -->
             <div class="card">
                 <h2>Upload Ledger Image</h2>
-                <form id="uploadForm" onsubmit="handleImageUpload(event)">
-                    <div class="form-group">
-                        <label for="uploadWeekDate">Week Range Label</label>
-                        <input type="text" id="uploadWeekDate" placeholder="e.g. Aug 24 - Aug 30, 2026" required>
+                <div class="form-group">
+                    <label for="uploadWeekDate">Week Range Label</label>
+                    <input type="text" id="uploadWeekDate" x-model="upload.weekDate" placeholder="e.g. Aug 24 - Aug 30, 2026">
+                </div>
+                <div class="form-group">
+                    <label>Ledger Image File</label>
+                    <div class="dropzone"
+                         :class="{dragover: upload.dragOver}"
+                         @dragover.prevent="upload.dragOver = true"
+                         @dragleave.prevent="upload.dragOver = false"
+                         @drop.prevent="handleDrop($event)"
+                         @click="$refs.fileInput.click()">
+                        <template x-if="upload.previewSrc">
+                            <img :src="upload.previewSrc" alt="preview">
+                        </template>
+                        <div x-text="upload.fileName || 'Drag & drop an image here, or click to browse'"></div>
+                        <input type="file" x-ref="fileInput" accept="image/*" style="display:none" @change="handleFileSelect($event)">
                     </div>
-                    <div class="form-group">
-                        <label for="ledgerFile">Ledger Image File</label>
-                        <input type="file" id="ledgerFile" accept="image/*" required>
-                    </div>
-                    <div class="form-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="overwriteWeek">
-                            Overwrite if week already exists
-                        </label>
-                    </div>
-                    <button type="submit" class="btn" id="btnUpload">Upload & Parse Image</button>
-                </form>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" x-model="upload.overwrite">
+                        Overwrite if week already exists
+                    </label>
+                </div>
+                <button class="btn" :disabled="upload.busy || !upload.file || !upload.weekDate" @click="submitUpload()">
+                    <span x-text="upload.busy ? 'Parsing Image via GPT-4o…' : 'Upload & Parse Image'"></span>
+                </button>
             </div>
 
             <!-- Crypto Payment Reconciliation -->
@@ -333,17 +393,27 @@
                 <h2>Crypto Reconciliation</h2>
                 <div class="form-group">
                     <label for="cryptoSymbol">Cryptocurrency</label>
-                    <select id="cryptoSymbol">
-                        <option value="LTC" selected>Litecoin (LTC)</option>
+                    <select id="cryptoSymbol" x-model="crypto.symbol" @change="refreshEstimate()">
+                        <option value="LTC">Litecoin (LTC)</option>
                         <option value="BTC">Bitcoin (BTC)</option>
                         <option value="ETH">Ethereum (ETH)</option>
                     </select>
                 </div>
                 <div class="form-group">
-                    <label for="txId">Transaction Hash (TxID)</label>
-                    <input type="text" id="txId" placeholder="Paste 0x... or 64-char hash">
+                    <label for="txId">Transaction Hash or Explorer Link</label>
+                    <input type="text" id="txId" x-model="crypto.txInput"
+                           placeholder="Paste a hash, or a link like etherscan.io/tx/0x...">
+                    <div class="hint">Any block explorer link works — we pull the hash out automatically.</div>
                 </div>
-                <button class="btn" id="btnReconcile" onclick="reconcileCrypto()">Verify Blockchain Tx</button>
+                <button class="btn" :disabled="crypto.busy || !selectedIds.length || !crypto.txInput" @click="reconcileCrypto()">
+                    <span x-text="crypto.busy ? 'Verifying Tx…' : 'Verify Blockchain Tx'"></span>
+                </button>
+                <div class="estimate-note" x-show="selectedIds.length && estimate.amount">
+                    ≈ <span x-text="estimate.amount"></span> <span x-text="crypto.symbol"></span> at today's rate for
+                    $<span x-text="selectedTotal.toFixed(2)"></span> owed. This is just a live estimate —
+                    the actual payment is always priced at the moment it was sent, so a price drop after
+                    sending never counts against the sender.
+                </div>
             </div>
 
             <!-- Manual Payment Card -->
@@ -351,30 +421,52 @@
                 <h2>Manual Payment</h2>
                 <div class="form-group">
                     <label for="manualNotes">Payment Notes (Optional)</label>
-                    <input type="text" id="manualNotes" placeholder="e.g. Cash / Bank Wire">
+                    <input type="text" id="manualNotes" x-model="manual.notes" placeholder="e.g. Cash / Bank Wire">
                 </div>
-                <button class="btn btn-secondary" id="btnManualPaid" onclick="markPaidManual()">Mark Selected as Manually Paid</button>
+                <button class="btn btn-secondary" :disabled="manual.busy || !selectedIds.length" @click="markPaidManual()">
+                    <span x-text="manual.busy ? 'Updating…' : 'Mark Selected as Manually Paid'"></span>
+                </button>
             </div>
 
             <!-- Team & Contractor Management -->
             <div class="card">
                 <h2>Team Management</h2>
-                <button class="btn btn-secondary" onclick="openModal('teamModal')">+ Create New Team</button>
+                <button class="btn btn-secondary" @click="teamModal.open = true">+ Create New Team</button>
                 <div style="margin-top: 14px;">
-                    <button class="btn btn-secondary btn-sm" onclick="openModal('contractorModal')">Manage Contractors</button>
+                    <button class="btn btn-secondary btn-sm" @click="contractorModal.open = true">Manage Contractors</button>
                 </div>
             </div>
         </div>
 
         <!-- Main Content Table Area -->
         <div class="card">
+            <div class="summary-strip">
+                <div class="stat">Total this week<strong x-text="'$' + totalWeek.toFixed(2)"></strong></div>
+                <div class="stat">Paid<strong x-text="'$' + totalPaid.toFixed(2)"></strong></div>
+                <div class="stat">Unpaid<strong x-text="'$' + totalUnpaid.toFixed(2)"></strong></div>
+                <div class="stat">Rows<strong x-text="ledgers.length"></strong></div>
+            </div>
+
             <div class="teams-bar">
-                <span style="font-size: 12px; font-weight: 600; color: var(--text-muted);">Quick Select Team:</span>
-                <button class="team-chip" onclick="selectAllLedgers(true)">Select All</button>
-                <button class="team-chip" onclick="selectAllLedgers(false)">Deselect All</button>
-                {% for team in teams %}
-                    <button class="team-chip" onclick="selectTeamMembers('{{ team.name }}')">{{ team.name }}</button>
-                {% endfor %}
+                <span style="font-size: 12px; font-weight: 600; color: var(--text-muted);">Quick Select:</span>
+                <button class="team-chip" @click="selectAll(true)">Select All</button>
+                <button class="team-chip" @click="selectAll(false)">Deselect All</button>
+                <template x-for="teamName in Object.keys(teamsMap)" :key="teamName">
+                    <button class="team-chip"
+                            :class="{active: filters.team === teamName}"
+                            @click="toggleTeamFilter(teamName)"
+                            x-text="teamName"></button>
+                </template>
+            </div>
+
+            <div class="toolbar">
+                <input type="text" x-model="filters.search" placeholder="Search contractor…">
+                <select x-model="filters.status">
+                    <option value="all">All statuses</option>
+                    <option value="unpaid">Unpaid only</option>
+                    <option value="paid">Paid / Manually paid</option>
+                </select>
+                <button class="btn-link" x-show="filters.team || filters.search || filters.status !== 'all'" @click="clearFilters()">Clear filters</button>
             </div>
 
             <div class="table-container">
@@ -382,437 +474,620 @@
                     <thead>
                         <tr>
                             <th style="width: 36px;">
-                                <input type="checkbox" id="masterCheckbox" onclick="toggleAllCheckboxes(this)">
+                                <input type="checkbox" @click="selectAll($event.target.checked)"
+                                       :checked="filteredLedgers.length && filteredLedgers.every(r => selectedIds.includes(r.id))">
                             </th>
-                            <th>ID</th>
-                            <th>Contractor</th>
-                            <th>Amount (USD)</th>
-                            <th>Status</th>
-                            <th>Paid At (EST)</th>
+                            <th @click="setSort('id')" class="sortable">ID <span class="arrow" x-text="sortArrow('id')"></span></th>
+                            <th @click="setSort('contractor')" class="sortable">Contractor <span class="arrow" x-text="sortArrow('contractor')"></span></th>
+                            <th @click="setSort('amount_owed_usd')" class="sortable">Amount (USD) <span class="arrow" x-text="sortArrow('amount_owed_usd')"></span></th>
+                            <th @click="setSort('status')" class="sortable">Status <span class="arrow" x-text="sortArrow('status')"></span></th>
+                            <th @click="setSort('paid_at_est')" class="sortable">Paid At (EST) <span class="arrow" x-text="sortArrow('paid_at_est')"></span></th>
                             <th>Tx Hash / Symbol</th>
                             <th>Notes</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% if ledgers %}
-                            {% for item in ledgers %}
-                            <tr>
-                                <td>
-                                    {% if 'PAID' not in item.status.upper() %}
-                                        <input type="checkbox" class="ledger-cb" value="{{ item.id }}" data-contractor="{{ item.contractor | lower }}">
-                                    {% endif %}
-                                </td>
-                                <td>{{ item.id }}</td>
-                                <td><strong>{{ item.contractor }}</strong></td>
-                                <td>${{ "%.2f"|format(item.amount_owed_usd) }}</td>
-                                <td>
-                                    {% if item.status == 'PAID' %}
-                                        <span class="badge badge-paid">PAID</span>
-                                    {% elif item.status == 'MANUALLY_PAID' %}
-                                        <span class="badge badge-manual">MANUAL</span>
-                                    {% else %}
-                                        <span class="badge badge-unpaid">UNPAID</span>
-                                    {% endif %}
-                                </td>
-                                <td style="font-size: 12px; color: var(--text-muted);">
-                                    {{ item.paid_at_est or '-' }}
-                                </td>
-                                <td style="font-size: 12px;">
-                                    {% if item.crypto_tx_id %}
-                                        <code>{{ item.crypto_symbol }}: {{ item.crypto_tx_id[:10] }}...</code>
-                                    {% else %}
-                                        -
-                                    {% endif %}
-                                </td>
-                                <td style="font-size: 12px; color: var(--text-muted);">
-                                    {{ item.notes or '-' }}
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        {% else %}
+                        <template x-if="!filteredLedgers.length">
                             <tr>
                                 <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 30px;">
-                                    No ledger entries found for this week.
+                                    No ledger entries match the current filters.
                                 </td>
                             </tr>
-                        {% endif %}
+                        </template>
+                        <template x-for="item in filteredLedgers" :key="item.id">
+                            <tr>
+                                <td>
+                                    <input type="checkbox" :value="item.id" :checked="selectedIds.includes(item.id)"
+                                           @change="toggleSelect(item.id, $event.target.checked)"
+                                           x-show="!item.status.toUpperCase().includes('PAID')">
+                                </td>
+                                <td x-text="item.id"></td>
+                                <td>
+                                    <button class="btn-link" style="font-weight:700; color: var(--text-main); text-decoration:none;"
+                                            @click="openHistory(item.contractor_id, item.contractor)" x-text="item.contractor"></button>
+                                </td>
+                                <td x-text="'$' + Number(item.amount_owed_usd).toFixed(2)"></td>
+                                <td>
+                                    <span class="badge badge-paid" x-show="item.status === 'PAID'">PAID</span>
+                                    <span class="badge badge-manual" x-show="item.status === 'MANUALLY_PAID'">MANUAL</span>
+                                    <span class="badge badge-unpaid" x-show="!item.status.toUpperCase().includes('PAID')">UNPAID</span>
+                                </td>
+                                <td style="font-size: 12px; color: var(--text-muted);" x-text="item.paid_at_est || '-'"></td>
+                                <td style="font-size: 12px;">
+                                    <template x-if="item.crypto_tx_id">
+                                        <a class="explorer-link" :href="explorerUrl(item.crypto_symbol, item.crypto_tx_id)" target="_blank" rel="noopener">
+                                            <code x-text="item.crypto_symbol + ': ' + item.crypto_tx_id.slice(0, 10) + '…'"></code>
+                                        </a>
+                                    </template>
+                                    <template x-if="!item.crypto_tx_id">
+                                        <span>-</span>
+                                    </template>
+                                </td>
+                                <td style="font-size: 12px; color: var(--text-muted);" x-text="item.notes || '-'"></td>
+                            </tr>
+                        </template>
                     </tbody>
                 </table>
+            </div>
+
+            <div class="selection-bar" x-show="selectedIds.length" x-cloak>
+                <div>
+                    <strong x-text="selectedIds.length + ' selected · $' + selectedTotal.toFixed(2) + ' owed'"></strong>
+                    <div class="muted">Use the sidebar actions to verify a crypto payment or mark these paid manually.</div>
+                </div>
+                <button class="btn btn-secondary btn-sm" style="width:auto;" @click="selectAll(false)">Clear selection</button>
             </div>
         </div>
     </div>
 </div>
 
 <!-- Modal: Unknown Contractor Approval -->
-<div class="modal-overlay" id="approvalModal">
+<div class="modal-overlay" x-show="approvalModal.open" x-cloak>
     <div class="modal">
         <div class="modal-header">
             <h3>Unknown Contractors Detected</h3>
-            <button class="btn btn-secondary btn-sm" onclick="closeModal('approvalModal')">✕</button>
+            <button class="btn btn-secondary btn-sm" @click="approvalModal.open = false">✕</button>
         </div>
         <p style="font-size: 13px; color: var(--text-muted);">
             The OCR parser identified names not currently in your contractor database. Map typos to existing contractors or leave as-is to add them.
         </p>
-        <div id="mappingContainer"></div>
+        <div>
+            <template x-for="unknown in approvalModal.unknownContractors" :key="unknown">
+                <div class="mapping-row">
+                    <div x-text="unknown"></div>
+                    <select @change="approvalModal.mappings[unknown] = $event.target.value">
+                        <option :value="unknown" x-text="'[Add as new: &quot;' + unknown + '&quot;]'"></option>
+                        <template x-for="exist in approvalModal.existingContractors" :key="exist">
+                            <option :value="exist" x-text="'Map to: ' + exist"></option>
+                        </template>
+                    </select>
+                </div>
+            </template>
+        </div>
         <div class="flex-actions">
-            <button class="btn" onclick="submitConfirmedUpload()">Confirm & Import Ledger</button>
-            <button class="btn btn-secondary" onclick="closeModal('approvalModal')">Cancel</button>
+            <button class="btn" @click="submitConfirmedUpload()">Confirm & Import Ledger</button>
+            <button class="btn btn-secondary" @click="approvalModal.open = false">Cancel</button>
         </div>
     </div>
 </div>
 
 <!-- Modal: Create Team -->
-<div class="modal-overlay" id="teamModal">
+<div class="modal-overlay" x-show="teamModal.open" x-cloak>
     <div class="modal">
         <div class="modal-header">
             <h3>Create New Team</h3>
-            <button class="btn btn-secondary btn-sm" onclick="closeModal('teamModal')">✕</button>
+            <button class="btn btn-secondary btn-sm" @click="teamModal.open = false">✕</button>
         </div>
         <div class="form-group">
             <label for="teamName">Team Name</label>
-            <input type="text" id="teamName" placeholder="e.g. Night Shift / Devs">
+            <input type="text" id="teamName" x-model="teamModal.name" placeholder="e.g. Night Shift / Devs">
         </div>
         <div class="form-group">
             <label>Select Contractors for Team</label>
             <div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); padding: 10px; border-radius: 6px;">
-                {% for c in contractors %}
+                <template x-for="c in contractors" :key="c.id">
                     <label class="checkbox-label" style="margin-bottom: 6px;">
-                        <input type="checkbox" class="team-contractor-cb" value="{{ c.name }}">
-                        {{ c.name }}
+                        <input type="checkbox" :value="c.name" @change="toggleTeamMember(c.name, $event.target.checked)">
+                        <span x-text="c.name"></span>
                     </label>
-                {% endfor %}
+                </template>
             </div>
         </div>
         <div class="flex-actions">
-            <button class="btn" onclick="submitCreateTeam()">Save Team</button>
-            <button class="btn btn-secondary" onclick="closeModal('teamModal')">Cancel</button>
+            <button class="btn" @click="submitCreateTeam()">Save Team</button>
+            <button class="btn btn-secondary" @click="teamModal.open = false">Cancel</button>
         </div>
     </div>
 </div>
 
 <!-- Modal: Manage Contractors -->
-<div class="modal-overlay" id="contractorModal">
+<div class="modal-overlay" x-show="contractorModal.open" x-cloak>
     <div class="modal">
         <div class="modal-header">
             <h3>Existing Contractors</h3>
-            <button class="btn btn-secondary btn-sm" onclick="closeModal('contractorModal')">✕</button>
+            <button class="btn btn-secondary btn-sm" @click="contractorModal.open = false">✕</button>
         </div>
         <div style="max-height: 300px; overflow-y: auto; margin-bottom: 16px;">
-            {% for c in contractors %}
+            <template x-for="c in contractors" :key="c.id">
                 <div class="contractor-tag">
-                    {{ c.name }}
-                    <span onclick="deleteContractor({{ c.id }}, '{{ c.name }}')">✕</span>
+                    <span class="link" @click="contractorModal.open = false; openHistory(c.id, c.name)" x-text="c.name"></span>
+                    <button @click="deleteContractor(c.id, c.name)">✕</button>
                 </div>
-            {% endfor %}
+            </template>
         </div>
-        <button class="btn btn-secondary" onclick="closeModal('contractorModal')">Close</button>
+        <button class="btn btn-secondary" @click="contractorModal.open = false">Close</button>
     </div>
 </div>
 
+<!-- Modal: Contractor History -->
+<div class="modal-overlay" x-show="historyModal.open" x-cloak>
+    <div class="modal" style="max-width: 650px;">
+        <div class="modal-header">
+            <h3 x-text="'Payment History — ' + historyModal.name"></h3>
+            <button class="btn btn-secondary btn-sm" @click="historyModal.open = false">✕</button>
+        </div>
+        <template x-if="historyModal.loading">
+            <div style="text-align:center; padding: 30px; color: var(--text-muted);">Loading…</div>
+        </template>
+        <template x-if="!historyModal.loading">
+            <div>
+                <div class="summary-strip">
+                    <div class="stat">Total owed (all time)<strong x-text="'$' + historyModal.totalOwed.toFixed(2)"></strong></div>
+                    <div class="stat">Total paid<strong x-text="'$' + historyModal.totalPaid.toFixed(2)"></strong></div>
+                </div>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr><th>Week</th><th>Amount</th><th>Status</th><th>Paid At</th><th>Tx</th></tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="row in historyModal.history" :key="row.id">
+                                <tr>
+                                    <td x-text="row.week_date"></td>
+                                    <td x-text="'$' + Number(row.amount_owed_usd).toFixed(2)"></td>
+                                    <td x-text="row.status"></td>
+                                    <td style="font-size:12px; color: var(--text-muted);" x-text="row.paid_at_est || '-'"></td>
+                                    <td style="font-size:12px;">
+                                        <template x-if="row.crypto_tx_id">
+                                            <a class="explorer-link" :href="explorerUrl(row.crypto_symbol, row.crypto_tx_id)" target="_blank" rel="noopener" x-text="row.crypto_symbol"></a>
+                                        </template>
+                                        <template x-if="!row.crypto_tx_id"><span>-</span></template>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </template>
+    </div>
+</div>
+
+<!-- Toasts -->
+<div class="toast-stack">
+    <template x-for="t in toasts" :key="t.id">
+        <div class="toast" :class="'toast-' + t.type" x-text="t.message"></div>
+    </template>
+</div>
+
 <script>
-    // Embedded Backend JSON State
-    const TEAMS_MAP = {{ teams_json | safe }};
-    const CONTRACTORS_LIST = {{ contractors_json | safe }};
-    let pendingUploadPayload = null;
+function app() {
+    return {
+        // Server-seeded state
+        ledgers: JSON.parse(document.getElementById('ledgers-data').textContent),
+        teamsMap: JSON.parse(document.getElementById('teams-data').textContent),
+        contractors: JSON.parse(document.getElementById('contractors-data').textContent),
+        weeks: JSON.parse(document.getElementById('weeks-data').textContent),
+        selectedWeek: document.getElementById('selected-week-data').textContent.trim(),
 
-    function openModal(id) {
-        document.getElementById(id).style.display = 'flex';
-    }
+        // UI state
+        selectedIds: [],
+        filters: { search: '', status: 'all', team: '' },
+        sortKey: 'contractor',
+        sortDir: 'asc',
+        toasts: [],
 
-    function closeModal(id) {
-        document.getElementById(id).style.display = 'none';
-    }
+        upload: { weekDate: '', overwrite: false, file: null, fileName: '', previewSrc: null, dragOver: false, busy: false },
+        crypto: { symbol: 'LTC', txInput: '', busy: false },
+        manual: { notes: '', busy: false },
+        estimate: { amount: null, price: null },
 
-    function changeWeek(weekDate) {
-        window.location.href = `/?selected_week=${encodeURIComponent(weekDate)}`;
-    }
+        approvalModal: { open: false, weekDate: '', overwrite: false, records: [], unknownContractors: [], existingContractors: [], mappings: {} },
+        teamModal: { open: false, name: '', members: [] },
+        contractorModal: { open: false },
+        historyModal: { open: false, loading: false, name: '', totalOwed: 0, totalPaid: 0, history: [] },
 
-    function setBtnLoading(btnId, isLoading, text = '') {
-        const btn = document.getElementById(btnId);
-        if (!btn) return;
-        if (isLoading) {
-            btn.disabled = true;
-            btn.dataset.origText = btn.innerText;
-            btn.innerText = text;
-        } else {
-            btn.disabled = false;
-            btn.innerText = btn.dataset.origText || 'Submit';
-        }
-    }
+        init() {
+            this.$watch('selectedIds', () => this.refreshEstimate());
+        },
 
-    function getSelectedLedgerIds() {
-        const checkboxes = document.querySelectorAll('.ledger-cb:checked');
-        return Array.from(checkboxes).map(cb => parseInt(cb.value));
-    }
+        // ---------- toasts ----------
+        notify(message, type = 'info') {
+            const id = Date.now() + Math.random();
+            this.toasts.push({ id, message, type });
+            setTimeout(() => { this.toasts = this.toasts.filter(t => t.id !== id); }, 5000);
+        },
 
-    function toggleAllCheckboxes(master) {
-        const checkboxes = document.querySelectorAll('.ledger-cb');
-        checkboxes.forEach(cb => cb.checked = master.checked);
-    }
+        // ---------- derived ----------
+        get filteredLedgers() {
+            let rows = this.ledgers.slice();
 
-    function selectAllLedgers(checked) {
-        const checkboxes = document.querySelectorAll('.ledger-cb');
-        checkboxes.forEach(cb => cb.checked = checked);
-        const master = document.getElementById('masterCheckbox');
-        if (master) master.checked = checked;
-    }
-
-    function selectTeamMembers(teamName) {
-        selectAllLedgers(false);
-        const members = TEAMS_MAP[teamName] || [];
-        const lowerMembers = members.map(m => m.toLowerCase());
-        
-        const checkboxes = document.querySelectorAll('.ledger-cb');
-        checkboxes.forEach(cb => {
-            const contractorName = cb.dataset.contractor;
-            if (lowerMembers.includes(contractorName)) {
-                cb.checked = true;
+            if (this.filters.status === 'unpaid') {
+                rows = rows.filter(r => !r.status.toUpperCase().includes('PAID'));
+            } else if (this.filters.status === 'paid') {
+                rows = rows.filter(r => r.status.toUpperCase().includes('PAID'));
             }
-        });
-    }
 
-    // Image Upload Handler
-    async function handleImageUpload(e) {
-        e.preventDefault();
-        const fileInput = document.getElementById('ledgerFile');
-        const weekDateInput = document.getElementById('uploadWeekDate').value.trim();
-        const overwriteInput = document.getElementById('overwriteWeek').checked;
+            if (this.filters.team) {
+                const members = (this.teamsMap[this.filters.team] || []).map(m => m.toLowerCase());
+                rows = rows.filter(r => members.includes(r.contractor.toLowerCase()));
+            }
 
-        if (!fileInput.files.length || !weekDateInput) {
-            return alert('Please select a file and specify the week date.');
-        }
+            if (this.filters.search.trim()) {
+                const q = this.filters.search.trim().toLowerCase();
+                rows = rows.filter(r => r.contractor.toLowerCase().includes(q));
+            }
 
-        const formData = new FormData();
-        formData.append('file', fileInput.files[0]);
-        formData.append('week_date', weekDateInput);
-        formData.append('overwrite', overwriteInput);
-
-        setBtnLoading('btnUpload', true, 'Parsing Image via GPT-4o...');
-
-        try {
-            const res = await fetch('/api/upload', {
-                method: 'POST',
-                body: formData
+            const key = this.sortKey;
+            const dir = this.sortDir === 'asc' ? 1 : -1;
+            rows.sort((a, b) => {
+                let av = a[key], bv = b[key];
+                if (key === 'amount_owed_usd') { av = Number(av); bv = Number(bv); }
+                if (av === null || av === undefined) av = '';
+                if (bv === null || bv === undefined) bv = '';
+                if (av < bv) return -1 * dir;
+                if (av > bv) return 1 * dir;
+                return 0;
             });
 
-            const data = await res.json();
+            return rows;
+        },
 
-            if (res.ok && data.status === 'success') {
-                alert(`Successfully extracted ${data.extracted_count} ledger records!`);
-                window.location.href = `/?selected_week=${encodeURIComponent(data.week_date)}`;
-            } else if (data.status === 'approval_required') {
-                renderApprovalModal(data);
+        get totalWeek() {
+            return this.ledgers.reduce((sum, r) => sum + Number(r.amount_owed_usd), 0);
+        },
+        get totalPaid() {
+            return this.ledgers.filter(r => r.status.toUpperCase().includes('PAID'))
+                .reduce((sum, r) => sum + Number(r.amount_owed_usd), 0);
+        },
+        get totalUnpaid() {
+            return this.totalWeek - this.totalPaid;
+        },
+        get selectedTotal() {
+            return this.ledgers.filter(r => this.selectedIds.includes(r.id))
+                .reduce((sum, r) => sum + Number(r.amount_owed_usd), 0);
+        },
+
+        setSort(key) {
+            if (this.sortKey === key) {
+                this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc';
             } else {
-                alert(`Error: ${data.message || 'Failed to parse image.'}`);
+                this.sortKey = key;
+                this.sortDir = 'asc';
             }
-        } catch (err) {
-            alert('Server or network error uploading image.');
-        } finally {
-            setBtnLoading('btnUpload', false);
-        }
-    }
+        },
+        sortArrow(key) {
+            if (this.sortKey !== key) return '';
+            return this.sortDir === 'asc' ? '▲' : '▼';
+        },
+        clearFilters() {
+            this.filters = { search: '', status: 'all', team: '' };
+        },
+        toggleTeamFilter(teamName) {
+            this.filters.team = this.filters.team === teamName ? '' : teamName;
+        },
 
-    function renderApprovalModal(data) {
-        pendingUploadPayload = data;
-        const container = document.getElementById('mappingContainer');
-        container.innerHTML = '';
-
-        data.unknown_contractors.forEach(unknown => {
-            const div = document.createElement('div');
-            div.className = 'mapping-row';
-
-            let optionsHtml = `<option value="${unknown}">[Add as new: "${unknown}"]</option>`;
-            data.existing_contractors.forEach(exist => {
-                optionsHtml += `<option value="${exist}">Map to: ${exist}</option>`;
-            });
-
-            div.innerHTML = `
-                <div><strong>${unknown}</strong></div>
-                <select class="unknown-mapping-select" data-raw="${unknown}">
-                    ${optionsHtml}
-                </select>
-            `;
-            container.appendChild(div);
-        });
-
-        openModal('approvalModal');
-    }
-
-    async function submitConfirmedUpload() {
-        if (!pendingUploadPayload) return;
-
-        const selects = document.querySelectorAll('.unknown-mapping-select');
-        const mappings = {};
-        selects.forEach(s => {
-            const rawName = s.dataset.raw;
-            const chosenName = s.value;
-            if (rawName !== chosenName) {
-                mappings[rawName] = chosenName;
-            }
-        });
-
-        const payload = {
-            week_date: pendingUploadPayload.week_date,
-            records: pendingUploadPayload.records,
-            overwrite: pendingUploadPayload.overwrite,
-            mappings: mappings
-        };
-
-        try {
-            const res = await fetch('/api/confirm-upload', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(payload)
-            });
-
-            const data = await res.json();
-            if (res.ok && data.status === 'success') {
-                closeModal('approvalModal');
-                window.location.href = `/?selected_week=${encodeURIComponent(data.week_date)}`;
+        // ---------- selection ----------
+        toggleSelect(id, checked) {
+            if (checked) {
+                if (!this.selectedIds.includes(id)) this.selectedIds.push(id);
             } else {
-                alert(`Error: ${data.message || 'Confirmation failed.'}`);
+                this.selectedIds = this.selectedIds.filter(x => x !== id);
             }
-        } catch (err) {
-            alert('Failed to send upload confirmation.');
-        }
-    }
-
-    // Crypto Verification Handler
-    async function reconcileCrypto() {
-        const ids = getSelectedLedgerIds();
-        const txId = document.getElementById('txId').value.trim();
-        const symbol = document.getElementById('cryptoSymbol').value;
-
-        if (!ids.length) return alert('Please select at least one contractor line item.');
-        if (!txId) return alert('Please enter a Transaction Hash (TxID).');
-
-        setBtnLoading('btnReconcile', true, 'Verifying Tx...');
-        try {
-            const res = await fetch('/api/reconcile-crypto', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ ledger_ids: ids, tx_id: txId, symbol: symbol })
-            });
-
-            const data = await res.json();
-
-            if (res.ok && data.status === 'matched') {
-                alert(`✅ Match Confirmed!\nTotal Owed: $${data.total_owed}\nReceived: $${data.received_usd}\nStatus updated to PAID.`);
-                location.reload();
-            } else if (data.status === 'mismatch') {
-                alert(`⚠️ Payment Mismatch!\nTotal Owed: $${data.total_owed}\nTx Value Found: $${data.received_usd}\nDifference: $${data.difference}`);
+        },
+        selectAll(checked) {
+            if (checked) {
+                const ids = this.filteredLedgers.filter(r => !r.status.toUpperCase().includes('PAID')).map(r => r.id);
+                this.selectedIds = Array.from(new Set([...this.selectedIds, ...ids]));
             } else {
-                alert(`❌ Error: ${data.message || 'Verification failed.'}`);
+                this.selectedIds = [];
             }
-        } catch (err) {
-            alert('Network error connecting to API.');
-        } finally {
-            setBtnLoading('btnReconcile', false);
-        }
-    }
+        },
 
-    // Manual Payment Handler
-    async function markPaidManual() {
-        const ids = getSelectedLedgerIds();
-        const notes = document.getElementById('manualNotes').value.trim();
+        explorerUrl(symbol, hash) {
+            if (!hash) return '#';
+            const s = (symbol || '').toUpperCase();
+            if (s === 'ETH') return `https://etherscan.io/tx/${hash}`;
+            if (s === 'BTC') return `https://blockstream.info/tx/${hash}`;
+            if (s === 'LTC') return `https://blockchair.com/litecoin/transaction/${hash}`;
+            return '#';
+        },
 
-        if (!ids.length) return alert('Please select at least one line item.');
-
-        setBtnLoading('btnManualPaid', true, 'Updating...');
-        try {
-            const res = await fetch('/api/mark-paid-manual', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ ledger_ids: ids, notes: notes })
-            });
-
-            if (res.ok) {
-                location.reload();
-            } else {
+        // ---------- data refresh (no full page reload) ----------
+        async loadWeek(weekDate) {
+            try {
+                const res = await fetch(`/api/ledgers?week_date=${encodeURIComponent(weekDate)}`);
                 const data = await res.json();
-                alert(`Error: ${data.message || 'Failed to update records.'}`);
+                if (data.status === 'success') {
+                    this.ledgers = data.ledgers;
+                    this.selectedWeek = data.week_date || weekDate;
+                    this.selectedIds = [];
+                    history.replaceState(null, '', `/?selected_week=${encodeURIComponent(this.selectedWeek)}`);
+                }
+            } catch (e) {
+                this.notify('Failed to load week data.', 'error');
             }
-        } catch (err) {
-            alert('Network error.');
-        } finally {
-            setBtnLoading('btnManualPaid', false);
-        }
-    }
+        },
+        async refreshLedgers() {
+            await this.loadWeek(this.selectedWeek);
+        },
 
-    // Week Deletion
-    async function deleteCurrentWeek() {
-        const currentWeek = "{{ selected_week }}";
-        if (!currentWeek) return;
+        // ---------- upload ----------
+        handleFileSelect(e) {
+            const file = e.target.files[0];
+            this.setUploadFile(file);
+        },
+        handleDrop(e) {
+            this.upload.dragOver = false;
+            const file = e.dataTransfer.files[0];
+            if (file) this.setUploadFile(file);
+        },
+        setUploadFile(file) {
+            if (!file || !file.type.startsWith('image/')) {
+                this.notify('Please choose an image file.', 'error');
+                return;
+            }
+            this.upload.file = file;
+            this.upload.fileName = file.name;
+            const reader = new FileReader();
+            reader.onload = (ev) => { this.upload.previewSrc = ev.target.result; };
+            reader.readAsDataURL(file);
+        },
+        async submitUpload() {
+            if (!this.upload.file || !this.upload.weekDate.trim()) {
+                this.notify('Please select a file and specify the week date.', 'error');
+                return;
+            }
+            const formData = new FormData();
+            formData.append('file', this.upload.file);
+            formData.append('week_date', this.upload.weekDate.trim());
+            formData.append('overwrite', this.upload.overwrite);
 
-        if (!confirm(`Are you sure you want to delete all ledger entries for week "${currentWeek}"?`)) return;
+            this.upload.busy = true;
+            try {
+                const res = await fetch('/api/upload', { method: 'POST', body: formData });
+                const data = await res.json();
 
-        try {
-            const res = await fetch('/api/delete-week', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ week_date: currentWeek })
-            });
+                if (res.ok && data.status === 'success') {
+                    this.notify(`Extracted ${data.extracted_count} ledger records.`, 'success');
+                    if (!this.weeks.includes(data.week_date)) this.weeks.unshift(data.week_date);
+                    await this.loadWeek(data.week_date);
+                    this.resetUpload();
+                } else if (data.status === 'approval_required') {
+                    this.openApprovalModal(data);
+                } else {
+                    this.notify(data.message || 'Failed to parse image.', 'error');
+                }
+            } catch (e) {
+                this.notify('Server or network error uploading image.', 'error');
+            } finally {
+                this.upload.busy = false;
+            }
+        },
+        resetUpload() {
+            this.upload.file = null;
+            this.upload.fileName = '';
+            this.upload.previewSrc = null;
+            this.upload.weekDate = '';
+            this.upload.overwrite = false;
+        },
+        openApprovalModal(data) {
+            this.approvalModal = {
+                open: true,
+                weekDate: data.week_date,
+                overwrite: data.overwrite,
+                records: data.records,
+                unknownContractors: data.unknown_contractors,
+                existingContractors: data.existing_contractors,
+                mappings: {},
+            };
+        },
+        async submitConfirmedUpload() {
+            const payload = {
+                week_date: this.approvalModal.weekDate,
+                records: this.approvalModal.records,
+                overwrite: this.approvalModal.overwrite,
+                mappings: this.approvalModal.mappings,
+            };
+            try {
+                const res = await fetch('/api/confirm-upload', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if (res.ok && data.status === 'success') {
+                    this.approvalModal.open = false;
+                    this.notify(`Imported ${data.extracted_count} ledger records.`, 'success');
+                    if (!this.weeks.includes(data.week_date)) this.weeks.unshift(data.week_date);
+                    await this.loadWeek(data.week_date);
+                    this.resetUpload();
+                } else {
+                    this.notify(data.message || 'Confirmation failed.', 'error');
+                }
+            } catch (e) {
+                this.notify('Failed to send upload confirmation.', 'error');
+            }
+        },
 
-            const data = await res.json();
-            if (res.ok && data.status === 'success') {
-                alert(`Deleted ${data.deleted_rows} ledger entries.`);
-                window.location.href = '/';
+        // ---------- crypto reconciliation ----------
+        async refreshEstimate() {
+            if (!this.selectedIds.length) { this.estimate = { amount: null, price: null }; return; }
+            try {
+                const res = await fetch(`/api/live-price?symbol=${this.crypto.symbol}`);
+                const data = await res.json();
+                if (data.status === 'success') {
+                    this.estimate.price = data.price_usd;
+                    this.estimate.amount = (this.selectedTotal / data.price_usd).toFixed(6);
+                }
+            } catch (e) { /* silent — estimate is best-effort */ }
+        },
+        async reconcileCrypto() {
+            if (!this.selectedIds.length) { this.notify('Select at least one line item first.', 'error'); return; }
+            if (!this.crypto.txInput.trim()) { this.notify('Paste a transaction hash or link first.', 'error'); return; }
+
+            this.crypto.busy = true;
+            try {
+                const res = await fetch('/api/reconcile-crypto', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ledger_ids: this.selectedIds, tx_id: this.crypto.txInput.trim(), symbol: this.crypto.symbol })
+                });
+                const data = await res.json();
+
+                if (res.ok && data.status === 'matched') {
+                    this.notify(
+                        `Match confirmed — $${data.received_usd} received (${data.confirmations} confirmation${data.confirmations === 1 ? '' : 's'}). Marked PAID.`,
+                        'success'
+                    );
+                    this.crypto.txInput = '';
+                    await this.refreshLedgers();
+                } else if (data.status === 'mismatch') {
+                    this.notify(
+                        `Mismatch: owed $${data.total_owed}, tx was worth $${data.received_usd} at send time (diff $${data.difference}).`,
+                        'error'
+                    );
+                } else {
+                    this.notify(data.message || 'Verification failed.', 'error');
+                }
+            } catch (e) {
+                this.notify('Network error connecting to API.', 'error');
+            } finally {
+                this.crypto.busy = false;
+            }
+        },
+
+        // ---------- manual payment ----------
+        async markPaidManual() {
+            if (!this.selectedIds.length) { this.notify('Select at least one line item first.', 'error'); return; }
+            this.manual.busy = true;
+            try {
+                const res = await fetch('/api/mark-paid-manual', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ledger_ids: this.selectedIds, notes: this.manual.notes })
+                });
+                if (res.ok) {
+                    this.notify('Marked as manually paid.', 'success');
+                    this.manual.notes = '';
+                    await this.refreshLedgers();
+                } else {
+                    const data = await res.json();
+                    this.notify(data.message || 'Failed to update records.', 'error');
+                }
+            } catch (e) {
+                this.notify('Network error.', 'error');
+            } finally {
+                this.manual.busy = false;
+            }
+        },
+
+        // ---------- week deletion ----------
+        async deleteCurrentWeek() {
+            if (!this.selectedWeek) return;
+            if (!confirm(`Delete all ledger entries for week "${this.selectedWeek}"? This can't be undone.`)) return;
+            try {
+                const res = await fetch('/api/delete-week', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ week_date: this.selectedWeek })
+                });
+                const data = await res.json();
+                if (res.ok && data.status === 'success') {
+                    this.notify(`Deleted ${data.deleted_rows} ledger entries.`, 'success');
+                    this.weeks = this.weeks.filter(w => w !== this.selectedWeek);
+                    const next = this.weeks[0] || '';
+                    this.selectedWeek = next;
+                    if (next) { await this.loadWeek(next); } else { this.ledgers = []; }
+                } else {
+                    this.notify(data.message || 'Delete failed.', 'error');
+                }
+            } catch (e) {
+                this.notify('Failed to delete week.', 'error');
+            }
+        },
+
+        // ---------- teams ----------
+        toggleTeamMember(name, checked) {
+            if (checked) {
+                if (!this.teamModal.members.includes(name)) this.teamModal.members.push(name);
             } else {
-                alert(`Error: ${data.message || 'Delete failed.'}`);
+                this.teamModal.members = this.teamModal.members.filter(m => m !== name);
             }
-        } catch (err) {
-            alert('Failed to delete week.');
-        }
-    }
-
-    // Team Creation
-    async function submitCreateTeam() {
-        const teamName = document.getElementById('teamName').value.trim();
-        const checkedBoxes = document.querySelectorAll('.team-contractor-cb:checked');
-        const contractorNames = Array.from(checkedBoxes).map(cb => cb.value);
-
-        if (!teamName) return alert('Please provide a team name.');
-        if (!contractorNames.length) return alert('Please select at least one contractor.');
-
-        try {
-            const res = await fetch('/api/teams', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ team_name: teamName, contractor_names: contractorNames })
-            });
-
-            if (res.ok) {
-                closeModal('teamModal');
-                location.reload();
-            } else {
-                alert('Failed to create team.');
+        },
+        async submitCreateTeam() {
+            if (!this.teamModal.name.trim()) { this.notify('Please provide a team name.', 'error'); return; }
+            if (!this.teamModal.members.length) { this.notify('Please select at least one contractor.', 'error'); return; }
+            try {
+                const res = await fetch('/api/teams', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ team_name: this.teamModal.name.trim(), contractor_names: this.teamModal.members })
+                });
+                if (res.ok) {
+                    if (!this.teamsMap[this.teamModal.name]) this.teamsMap[this.teamModal.name] = [];
+                    this.teamsMap[this.teamModal.name] = Array.from(new Set([...this.teamsMap[this.teamModal.name], ...this.teamModal.members]));
+                    this.notify('Team created.', 'success');
+                    this.teamModal = { open: false, name: '', members: [] };
+                } else {
+                    this.notify('Failed to create team.', 'error');
+                }
+            } catch (e) {
+                this.notify('Error connecting to server.', 'error');
             }
-        } catch (err) {
-            alert('Error connecting to server.');
-        }
-    }
+        },
 
-    // Delete Contractor
-    async function deleteContractor(id, name) {
-        if (!confirm(`Are you sure you want to delete contractor "${name}" and all associated ledgers?`)) return;
-
-        try {
-            const res = await fetch('/api/delete-contractor', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ contractor_id: id })
-            });
-
-            if (res.ok) {
-                location.reload();
-            } else {
-                alert('Failed to delete contractor.');
+        // ---------- contractors ----------
+        async deleteContractor(id, name) {
+            if (!confirm(`Delete contractor "${name}" and all associated ledger history? This can't be undone.`)) return;
+            try {
+                const res = await fetch('/api/delete-contractor', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contractor_id: id })
+                });
+                if (res.ok) {
+                    this.contractors = this.contractors.filter(c => c.id !== id);
+                    this.ledgers = this.ledgers.filter(r => r.contractor_id !== id);
+                    this.notify('Contractor deleted.', 'success');
+                } else {
+                    this.notify('Failed to delete contractor.', 'error');
+                }
+            } catch (e) {
+                this.notify('Error deleting contractor.', 'error');
             }
-        } catch (err) {
-            alert('Error deleting contractor.');
-        }
-    }
+        },
+        async openHistory(contractorId, name) {
+            this.historyModal = { open: true, loading: true, name, totalOwed: 0, totalPaid: 0, history: [] };
+            try {
+                const res = await fetch(`/api/contractor-history/${contractorId}`);
+                const data = await res.json();
+                if (data.status === 'success') {
+                    this.historyModal = {
+                        open: true, loading: false, name: data.contractor,
+                        totalOwed: data.total_owed, totalPaid: data.total_paid, history: data.history
+                    };
+                } else {
+                    this.notify(data.message || 'Failed to load history.', 'error');
+                    this.historyModal.open = false;
+                }
+            } catch (e) {
+                this.notify('Failed to load contractor history.', 'error');
+                this.historyModal.open = false;
+            }
+        },
+    };
+}
 </script>
+
+<script type="application/json" id="ledgers-data">{{ ledgers_json | safe }}</script>
+<script type="application/json" id="teams-data">{{ teams_json | safe }}</script>
+<script type="application/json" id="contractors-data">{{ contractors_json | safe }}</script>
+<script type="application/json" id="weeks-data">{{ weeks_json | safe }}</script>
+<div id="selected-week-data" style="display:none">{{ selected_week }}</div>
 
 </body>
 </html>
