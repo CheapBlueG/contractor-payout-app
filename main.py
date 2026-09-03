@@ -31,7 +31,7 @@ async def index(request: Request, selected_week: str = None):
         conn = get_db()
         cursor = conn.cursor()
 
-        # Query distinct week ranges ordered by the most recent ledger entry
+        # Query distinct week ranges ordered by highest ledger ID
         cursor.execute("SELECT week_date FROM weekly_ledgers GROUP BY week_date ORDER BY MAX(id) DESC")
         weeks_res = cursor.fetchall()
         weeks = [w["week_date"] for w in weeks_res]
@@ -76,6 +76,20 @@ async def index(request: Request, selected_week: str = None):
 
 @app.post("/api/upload")
 async def upload_weekly_image(file: UploadFile = File(...), week_date: str = Form(...)):
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Prevent duplicate week uploads
+    cursor.execute("SELECT COUNT(*) as cnt FROM weekly_ledgers WHERE week_date = %s", (week_date,))
+    check_res = cursor.fetchone()
+    if check_res and check_res["cnt"] > 0:
+        cursor.close()
+        conn.close()
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": f"Data for '{week_date}' already exists. Please delete the existing week first if you wish to re-upload."}
+        )
+
     contents = await file.read()
     base64_image = base64.b64encode(contents).decode("utf-8")
 
@@ -103,8 +117,6 @@ async def upload_weekly_image(file: UploadFile = File(...), week_date: str = For
     data = json.loads(response.choices[0].message.content)
     records = data.get("records", [])
 
-    conn = get_db()
-    cursor = conn.cursor()
     for r in records:
         name = str(r["contractor"]).strip().lower()
         amount = float(r["profits"])
@@ -122,6 +134,20 @@ async def upload_weekly_image(file: UploadFile = File(...), week_date: str = For
     cursor.close()
     conn.close()
     return JSONResponse({"status": "success", "extracted_count": len(records), "week_date": week_date})
+
+@app.post("/api/delete-week")
+async def delete_week(payload: dict = Body(...)):
+    week_date = payload.get("week_date")
+    if not week_date:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Week date parameter is required."})
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM weekly_ledgers WHERE week_date = %s", (week_date,))
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return {"status": "success"}
 
 @app.post("/api/mark-paid-manual")
 async def mark_paid_manual(ledger_ids: list[int] = Body(...), notes: str = Body("")):
