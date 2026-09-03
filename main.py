@@ -31,12 +31,12 @@ async def index(request: Request, selected_week: str = None):
         conn = get_db()
         cursor = conn.cursor()
 
-        # Get all distinct week ranges from database
-        cursor.execute("SELECT DISTINCT week_date FROM weekly_ledgers ORDER BY id DESC")
+        # Query distinct week ranges ordered by the most recent ledger entry
+        cursor.execute("SELECT week_date FROM weekly_ledgers GROUP BY week_date ORDER BY MAX(id) DESC")
         weeks_res = cursor.fetchall()
         weeks = [w["week_date"] for w in weeks_res]
 
-        # Default to the most recently uploaded week if none is specified
+        # Default to the most recently uploaded week if none is selected
         if not selected_week and weeks:
             selected_week = weeks[0]
 
