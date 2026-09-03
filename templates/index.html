@@ -9,17 +9,44 @@
     <div class="max-w-6xl mx-auto space-y-8">
         <h1 class="text-3xl font-bold border-b border-gray-700 pb-4">Weekly Contractor Payout Portal</h1>
 
+        <!-- 1. File Upload Section with Date Range -->
         <div class="bg-gray-800 p-6 rounded-lg border border-gray-700">
             <h2 class="text-xl font-semibold mb-4">1. Upload Weekly Screenshot</h2>
-            <form id="uploadForm" class="flex items-center gap-4">
-                <input type="date" id="weekDate" required class="bg-gray-700 p-2 rounded text-white border border-gray-600">
+            <form id="uploadForm" class="flex flex-wrap items-center gap-4">
+                <div class="flex items-center gap-2">
+                    <label class="text-xs text-gray-400">Start Date:</label>
+                    <input type="date" id="startDate" required class="bg-gray-700 p-2 rounded text-white border border-gray-600 text-sm">
+                </div>
+                <div class="flex items-center gap-2">
+                    <label class="text-xs text-gray-400">End Date:</label>
+                    <input type="date" id="endDate" required class="bg-gray-700 p-2 rounded text-white border border-gray-600 text-sm">
+                </div>
                 <input type="file" id="imageFile" accept="image/*" required class="text-sm">
-                <button type="submit" class="bg-blue-600 px-4 py-2 rounded hover:bg-blue-500">Upload & Parse</button>
+                <button type="submit" class="bg-blue-600 px-4 py-2 rounded text-sm hover:bg-blue-500 font-medium">Upload & Parse</button>
             </form>
         </div>
 
+        <!-- 2. Create Team Group Section -->
         <div class="bg-gray-800 p-6 rounded-lg border border-gray-700 space-y-4">
-            <h2 class="text-xl font-semibold">2. Reconcile Selected Ledger Items</h2>
+            <h2 class="text-xl font-semibold">2. Create Team Group</h2>
+            <div class="flex flex-wrap gap-4 items-center">
+                <input type="text" id="teamName" placeholder="Team Name (e.g. Team Alpha)" class="bg-gray-700 p-2 rounded text-sm border border-gray-600 w-64">
+                <input type="text" id="teamMembers" placeholder="Contractor Names (comma separated: bob, rob, tom)" class="bg-gray-700 p-2 rounded text-sm border border-gray-600 w-96">
+                <button onclick="createTeam()" class="bg-indigo-600 px-4 py-2 rounded text-sm hover:bg-indigo-500">Create Team</button>
+            </div>
+            {% if teams %}
+            <div class="text-xs text-gray-400 mt-2">
+                <strong>Saved Teams:</strong> 
+                {% for team in teams %}
+                    <span class="inline-block bg-gray-700 px-2 py-1 rounded mr-2">{{ team.name }}</span>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- 3. Reconciliation Action Bar -->
+        <div class="bg-gray-800 p-6 rounded-lg border border-gray-700 space-y-4">
+            <h2 class="text-xl font-semibold">3. Reconcile Selected Ledger Items</h2>
             <div class="flex flex-wrap gap-4 items-center">
                 <p class="font-medium text-lg">Total Owed: <span id="selectedSum" class="text-green-400 font-bold">$0.00</span></p>
 
@@ -42,12 +69,13 @@
             </div>
         </div>
 
+        <!-- Ledger Table -->
         <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
             <table class="w-full text-left text-sm">
                 <thead class="bg-gray-700 text-gray-300">
                     <tr>
                         <th class="p-3"><input type="checkbox" onclick="toggleSelectAll(this)"></th>
-                        <th class="p-3">Week Date</th>
+                        <th class="p-3">Week Range</th>
                         <th class="p-3">Contractor</th>
                         <th class="p-3">Owed (USD)</th>
                         <th class="p-3">Status</th>
@@ -63,7 +91,7 @@
                             <input type="checkbox" class="row-checkbox" value="{{ row.id }}" data-amount="{{ row.amount_owed_usd }}" onclick="updateSum()">
                             {% endif %}
                         </td>
-                        <td class="p-3">{{ row.week_date }}</td>
+                        <td class="p-3 font-mono text-xs text-blue-300">{{ row.week_date }}</td>
                         <td class="p-3 font-semibold">{{ row.contractor }}</td>
                         <td class="p-3 text-green-400">${{ "%.2f"|format(row.amount_owed_usd) }}</td>
                         <td class="p-3">
@@ -101,16 +129,62 @@
             return Array.from(document.querySelectorAll('.row-checkbox:checked')).map(cb => parseInt(cb.value));
         }
 
+        function formatDateRange(startStr, endStr) {
+            const start = new Date(startStr + 'T00:00:00');
+            const end = new Date(endStr + 'T00:00:00');
+            
+            const options = { month: 'short', day: 'numeric' };
+            const startFormatted = start.toLocaleDateString('en-US', options);
+            const endFormatted = end.toLocaleDateString('en-US', options);
+            const year = end.getFullYear();
+
+            return `${startFormatted} - ${endFormatted}, ${year}`;
+        }
+
         document.getElementById('uploadForm').onsubmit = async (e) => {
             e.preventDefault();
+            const startVal = document.getElementById('startDate').value;
+            const endVal = document.getElementById('endDate').value;
+            
+            if (!startVal || !endVal) {
+                return alert('Please select both a Start Date and End Date.');
+            }
+
+            const rangeString = formatDateRange(startVal, endVal);
+
             const formData = new FormData();
-            formData.append('week_date', document.getElementById('weekDate').value);
+            formData.append('week_date', rangeString);
             formData.append('file', document.getElementById('imageFile').files[0]);
             
             const res = await fetch('/api/upload', { method: 'POST', body: formData });
             const data = await res.json();
             if(data.status === 'success') location.reload();
         };
+
+        async function createTeam() {
+            const teamName = document.getElementById('teamName').value.trim();
+            const membersRaw = document.getElementById('teamMembers').value.trim();
+            
+            if (!teamName || !membersRaw) {
+                return alert('Please enter both a team name and contractor names.');
+            }
+
+            const members = membersRaw.split(',').map(m => m.trim()).filter(m => m.length > 0);
+
+            const res = await fetch('/api/teams', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ team_name: teamName, contractor_names: members })
+            });
+
+            const data = await res.json();
+            if (data.status === 'success') {
+                alert(`Team "${teamName}" created successfully!`);
+                location.reload();
+            } else {
+                alert('Failed to create team.');
+            }
+        }
 
         async function reconcileCrypto() {
             const ids = getSelectedIds();
