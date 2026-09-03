@@ -12,7 +12,7 @@ ETH_RECEIVING_ADDRESS = os.getenv("ETH_RECEIVING_ADDRESS", "0x67803EfDf6EfBcE405
 def verify_eth_tx(tx_id: str):
     """
     Verifies an Ethereum transaction hash via Etherscan API.
-    Checks that the recipient 'to' address matches the designated receiving address.
+    Supports native ETH transfers and standard ERC-20 token transfers.
     """
     clean_tx = tx_id.strip()
     if not clean_tx or not clean_tx.startswith("0x") or len(clean_tx) != 66:
@@ -27,21 +27,46 @@ def verify_eth_tx(tx_id: str):
     except requests.RequestException as e:
         raise ValueError(f"Failed to communicate with Etherscan API: {str(e)}")
 
+    if "error" in data:
+        raise ValueError(f"Etherscan API Error: {data['error'].get('message', 'Unknown API error')}")
+
     result = data.get("result")
     if not result or not isinstance(result, dict):
-        raise ValueError("Ethereum transaction not found or invalid response.")
+        raise ValueError("Ethereum transaction not found. Verify the TxID on Etherscan.")
 
-    # Verify recipient address matches
+    target_addr = ETH_RECEIVING_ADDRESS.lower()
     tx_to = str(result.get("to") or "").strip().lower()
-    if tx_to != ETH_RECEIVING_ADDRESS.lower():
-        raise ValueError(f"Transaction recipient ('{tx_to}') does not match expected receiving address '{ETH_RECEIVING_ADDRESS}'.")
+    input_data = str(result.get("input") or "0x")
 
-    value_wei_hex = result.get("value", "0x0")
-    try:
-        value_wei = int(value_wei_hex, 16)
-        amount_eth = value_wei / 1e18
-    except ValueError:
-        raise ValueError("Failed to parse Ethereum transaction transfer value.")
+    amount_eth = 0.0
+
+    # Case 1: Direct/Native ETH Transfer
+    if tx_to == target_addr:
+        value_wei_hex = result.get("value", "0x0")
+        try:
+            value_wei = int(value_wei_hex, 16)
+            amount_eth = value_wei / 1e18
+        except ValueError:
+            raise ValueError("Failed to parse Ethereum transaction transfer value.")
+
+    # Case 2: ERC-20 Token Transfer
+    elif input_data.startswith("0xa9059cbb") and len(input_data) >= 138:
+        recipient_hex = "0x" + input_data[34:74].lower()
+        if recipient_hex != target_addr:
+            raise ValueError(f"ERC-20 transfer target ('{recipient_hex}') does not match wallet '{ETH_RECEIVING_ADDRESS}'.")
+
+        value_hex = "0x" + input_data[74:138]
+        try:
+            raw_value = int(value_hex, 16)
+            amount_eth = raw_value / 1e18
+        except ValueError:
+            raise ValueError("Failed to parse ERC-20 transfer token value.")
+
+    else:
+        raise ValueError(f"Transaction recipient ('{tx_to}') does not match target address '{ETH_RECEIVING_ADDRESS}'.")
+
+    if amount_eth <= 0:
+        raise ValueError("Transaction contains 0 transferred value to the target address.")
 
     timestamp = None
     block_number = result.get("blockNumber")
