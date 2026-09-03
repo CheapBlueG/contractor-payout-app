@@ -55,7 +55,6 @@
                 <span>🗑️</span> Delete Week Data
             </h2>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <!-- Method A: Quick Delete Selected Week -->
                 <div class="bg-gray-800/80 p-4 rounded border border-gray-700 flex flex-col justify-between space-y-3">
                     <div>
                         <span class="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Option A: Delete Focused Week</span>
@@ -73,7 +72,6 @@
                     </div>
                 </div>
 
-                <!-- Method B: Delete by Custom Range -->
                 <div class="bg-gray-800/80 p-4 rounded border border-gray-700 flex flex-col justify-between space-y-3">
                     <div>
                         <span class="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Option B: Select Date Range to Delete</span>
@@ -113,12 +111,16 @@
                     <span>Create Team</span>
                 </button>
             </div>
-            {% if teams %}
-            <div class="text-xs text-gray-400 mt-2">
+            {% if teams_map %}
+            <div class="text-xs text-gray-400 mt-2 space-y-1">
                 <strong>Saved Teams:</strong> 
-                {% for team in teams %}
-                    <span class="inline-block bg-gray-700 px-2 py-1 rounded mr-2">{{ team.name }}</span>
-                {% endfor %}
+                <div class="flex flex-wrap gap-2 mt-1">
+                    {% for team_name, members in teams_map.items() %}
+                        <span class="inline-block bg-indigo-950 border border-indigo-700/60 px-2.5 py-1 rounded text-indigo-300 font-medium">
+                            {{ team_name }} <span class="text-gray-400">({{ members|length }} members)</span>
+                        </span>
+                    {% endfor %}
+                </div>
             </div>
             {% endif %}
         </div>
@@ -141,10 +143,25 @@
             {% endif %}
         </div>
 
-        <!-- 5. Reconciliation Action Bar -->
+        <!-- 5. Reconciliation & Real-Time Team Selection Bar -->
         <div class="bg-gray-800 p-6 rounded-lg border border-gray-700 space-y-4">
-            <h2 class="text-xl font-semibold">5. Reconcile Selected Ledger Items</h2>
-            <div class="flex flex-wrap gap-4 items-center">
+            <div class="flex items-center justify-between border-b border-gray-700 pb-3 flex-wrap gap-2">
+                <h2 class="text-xl font-semibold">5. Reconcile Ledger Items</h2>
+                
+                <!-- Real-time Team Quick Selectors -->
+                {% if teams_map %}
+                <div class="flex items-center gap-2 flex-wrap">
+                    <span class="text-xs font-semibold text-gray-400 uppercase">⚡ 1-Click Team Select:</span>
+                    {% for team_name, members in teams_map.items() %}
+                        <button type="button" onclick="selectTeam('{{ team_name }}')" class="bg-indigo-900/80 hover:bg-indigo-700 border border-indigo-500/50 text-indigo-200 text-xs px-3 py-1.5 rounded-full font-semibold transition-all">
+                            Select {{ team_name }}
+                        </button>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="flex flex-wrap gap-4 items-center pt-2">
                 <p class="font-medium text-lg">Total Owed: <span id="selectedSum" class="text-green-400 font-bold">$0.00</span></p>
 
                 <div class="flex items-center gap-2">
@@ -155,7 +172,7 @@
                         <option value="LTC">LTC</option>
                     </select>
                     <button id="btnReconcile" onclick="reconcileCrypto()" class="bg-emerald-600 px-4 py-2 rounded text-sm hover:bg-emerald-500 font-semibold transition-all flex items-center gap-2">
-                        <span>Verify & Pay</span>
+                        <span>Verify & Pay Batch</span>
                     </button>
                 </div>
 
@@ -189,7 +206,7 @@
                     <tr class="border-b border-gray-700 hover:bg-gray-750">
                         <td class="p-3">
                             {% if row.status == 'UNPAID' %}
-                            <input type="checkbox" class="row-checkbox" value="{{ row.id }}" data-amount="{{ row.amount_owed_usd }}" onclick="updateSum()">
+                            <input type="checkbox" class="row-checkbox" value="{{ row.id }}" data-amount="{{ row.amount_owed_usd }}" data-contractor="{{ row.contractor }}" onclick="updateSum()">
                             {% endif %}
                         </td>
                         <td class="p-3 font-mono text-xs text-blue-300">{{ row.week_date }}</td>
@@ -217,6 +234,9 @@
     </div>
 
     <script>
+        // Parse teams map from backend JSON string safely
+        const teamsMap = {{ teams_json | safe }};
+
         function setBtnLoading(btnId, isLoading, loadingText = "Processing...") {
             const btn = document.getElementById(btnId);
             if (!btn) return;
@@ -243,11 +263,37 @@
             updateSum();
         }
 
+        function selectTeam(teamName) {
+            // Clear existing checkbox selections
+            document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
+
+            if (!teamName || !teamsMap[teamName]) {
+                updateSum();
+                return;
+            }
+
+            const members = teamsMap[teamName].map(m => m.trim().toLowerCase());
+            let matchedCount = 0;
+
+            document.querySelectorAll('.row-checkbox').forEach(cb => {
+                const contractor = (cb.getAttribute('data-contractor') || '').trim().toLowerCase();
+                if (members.includes(contractor)) {
+                    cb.checked = true;
+                    matchedCount++;
+                }
+            });
+
+            updateSum();
+
+            if (matchedCount === 0) {
+                alert(`No unpaid entries found for "${teamName}" in this focused week.`);
+            }
+        }
+
         function getSelectedIds() {
             return Array.from(document.querySelectorAll('.row-checkbox:checked')).map(cb => parseInt(cb.value));
         }
 
-        // Deterministic date range formatter (prevents UTC/Local timezone shifts)
         function formatDateRange(startStr, endStr) {
             const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
             const [sYear, sMonth, sDay] = startStr.split('-');
@@ -361,7 +407,7 @@
 
         async function reconcileCrypto() {
             const ids = getSelectedIds();
-            const txId = document.getElementById('txId').value;
+            const txId = document.getElementById('txId').value.trim();
             const symbol = document.getElementById('cryptoSymbol').value;
             if(!ids.length || !txId) return alert('Select items and enter TxID');
 
