@@ -7,17 +7,19 @@
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.13.5/cdn.min.js"></script>
     <style>
         :root {
-            --bg-main: #f8fafc;
-            --card-bg: #ffffff;
-            --border-color: #e2e8f0;
-            --text-main: #0f172a;
-            --text-muted: #64748b;
-            --primary: #2563eb;
-            --primary-hover: #1d4ed8;
-            --danger: #ef4444;
-            --danger-hover: #dc2626;
-            --success: #16a34a;
-            --warning: #d97706;
+            --bg-main: #0f172a;
+            --card-bg: #1a2332;
+            --card-bg-elevated: #212c40;
+            --border-color: #334155;
+            --text-main: #e2e8f0;
+            --text-muted: #94a3b8;
+            --primary: #3b82f6;
+            --primary-hover: #60a5fa;
+            --danger: #f87171;
+            --danger-hover: #fca5a5;
+            --success: #4ade80;
+            --warning: #fbbf24;
+            --input-bg: #101827;
         }
 
         * { box-sizing: border-box; }
@@ -89,15 +91,16 @@
             color: var(--text-muted);
         }
 
-        input[type="text"], input[type="file"], select, textarea {
+        input[type="text"], input[type="date"], input[type="file"], select, textarea {
             width: 100%;
             padding: 9px 12px;
             border: 1px solid var(--border-color);
             border-radius: 6px;
             font-size: 14px;
             box-sizing: border-box;
-            background: #fff;
+            background: var(--input-bg);
             color: var(--text-main);
+            color-scheme: dark;
         }
 
         input[type="checkbox"] { cursor: pointer; }
@@ -137,11 +140,11 @@
         .btn-danger:hover { background: var(--danger-hover); }
 
         .btn-secondary {
-            background: #f1f5f9;
-            color: #334155;
-            border: 1px solid #cbd5e1;
+            background: var(--card-bg-elevated);
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
         }
-        .btn-secondary:hover { background: #e2e8f0; }
+        .btn-secondary:hover { background: #2a3750; }
 
         .btn-sm { padding: 6px 10px; font-size: 12px; width: auto; }
         .btn-link {
@@ -156,7 +159,7 @@
         th, td { padding: 12px 14px; border-bottom: 1px solid var(--border-color); white-space: nowrap; }
 
         th {
-            background: #f8fafc;
+            background: var(--card-bg-elevated);
             color: var(--text-muted);
             font-weight: 600;
             font-size: 12px;
@@ -168,7 +171,7 @@
         th.sortable:hover { color: var(--text-main); }
         th .arrow { font-size: 10px; margin-left: 3px; opacity: 0.6; }
 
-        tr:hover { background: #fafafa; }
+        tr:hover { background: var(--card-bg-elevated); }
 
         .badge {
             display: inline-block;
@@ -179,10 +182,10 @@
             text-transform: uppercase;
         }
 
-        .badge-unpaid { background: #fee2e2; color: #991b1b; }
-        .badge-paid { background: #dcfce7; color: #166534; }
-        .badge-manual { background: #fef3c7; color: #92400e; }
-        .badge-confirm { background: #e0e7ff; color: #3730a3; }
+        .badge-unpaid { background: #4c1d1d; color: #fca5a5; }
+        .badge-paid { background: #14532d; color: #86efac; }
+        .badge-manual { background: #451a03; color: #fcd34d; }
+        .badge-confirm { background: #312e81; color: #c7d2fe; }
 
         .toolbar {
             display: flex;
@@ -198,23 +201,24 @@
         .teams-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
 
         .team-chip {
-            background: #e2e8f0;
-            border: none;
+            background: var(--card-bg-elevated);
+            border: 1px solid var(--border-color);
             padding: 5px 12px;
             border-radius: 16px;
             font-size: 12px;
             font-weight: 600;
             cursor: pointer;
-            color: #334155;
+            color: var(--text-main);
         }
-        .team-chip:hover { background: #cbd5e1; }
-        .team-chip.active { background: var(--primary); color: #fff; }
+        .team-chip:hover { background: #2a3750; }
+        .team-chip.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 
         .selection-bar {
             position: sticky;
             bottom: 0;
-            background: #0f172a;
+            background: #060b16;
             color: #fff;
+            border: 1px solid var(--border-color);
             border-radius: 10px;
             padding: 14px 18px;
             display: flex;
@@ -226,11 +230,12 @@
         }
         .selection-bar strong { font-size: 15px; }
         .selection-bar .muted { color: #94a3b8; font-size: 12px; }
+        .selection-bar strong { color: #fff; }
 
         .modal-overlay {
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(15, 23, 42, 0.5);
+            background: rgba(2, 6, 23, 0.7);
             display: flex;
             justify-content: center;
             align-items: center;
@@ -239,14 +244,16 @@
         }
 
         .modal {
-            background: #fff;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
             border-radius: 10px;
             padding: 24px;
             width: 100%;
             max-width: 550px;
-            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
+            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.4);
             max-height: 90vh;
             overflow-y: auto;
+            color: var(--text-main);
         }
 
         .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
@@ -266,11 +273,13 @@
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            background: #f1f5f9;
+            background: var(--card-bg-elevated);
+            border: 1px solid var(--border-color);
             padding: 4px 8px;
             border-radius: 4px;
             font-size: 12px;
             margin: 2px;
+            color: var(--text-main);
         }
         .contractor-tag button {
             background: none; border: none; padding: 0; cursor: pointer;
@@ -288,7 +297,7 @@
             cursor: pointer;
             transition: border-color 0.15s, background 0.15s;
         }
-        .dropzone.dragover { border-color: var(--primary); background: #eff6ff; color: var(--primary); }
+        .dropzone.dragover { border-color: var(--primary); background: #16233d; color: var(--primary-hover); }
         .dropzone img { max-width: 100%; max-height: 140px; border-radius: 6px; margin-bottom: 8px; }
 
         .toast-stack {
@@ -311,6 +320,7 @@
         .toast-success { background: var(--success); }
         .toast-error { background: var(--danger); }
         .toast-info { background: #334155; }
+        .toast { border: 1px solid rgba(255,255,255,0.08); }
 
         .summary-strip {
             display: flex;
@@ -359,8 +369,17 @@
             <div class="card">
                 <h2>Upload Ledger Image</h2>
                 <div class="form-group">
-                    <label for="uploadWeekDate">Week Range Label</label>
-                    <input type="text" id="uploadWeekDate" x-model="upload.weekDate" placeholder="e.g. Aug 24 - Aug 30, 2026">
+                    <label for="uploadWeekPicker">Week (Monday–Sunday)</label>
+                    <input type="date" id="uploadWeekPicker" x-model="upload.pickedDate"
+                           @change="onPickWeek()"
+                           @mouseenter="openCalendar($event)">
+                    <div class="hint" x-show="upload.weekDate">
+                        This will be logged as <strong x-text="upload.weekDate"></strong>
+                    </div>
+                    <div class="hint" x-show="!upload.weekDate">
+                        Pick any day — hover or click to open the calendar. We snap it to that
+                        Monday–Sunday week automatically, so every week is a fixed 7-day range.
+                    </div>
                 </div>
                 <div class="form-group">
                     <label>Ledger Image File</label>
@@ -671,14 +690,29 @@
 </div>
 
 <script>
+function safeParseSeed(elementId, fallback) {
+    // Defensive: if any single seed block fails to parse (bad data, an
+    // encoding edge case, whatever), this only loses that one dataset
+    // instead of throwing inside app() and silently breaking the ENTIRE
+    // page's reactivity — which previously made unrelated things like
+    // teams or contractors look "missing" even when they loaded fine.
+    try {
+        const el = document.getElementById(elementId);
+        return el ? JSON.parse(el.textContent) : fallback;
+    } catch (e) {
+        console.error(`Failed to parse seed data for #${elementId}:`, e);
+        return fallback;
+    }
+}
+
 function app() {
     return {
         // Server-seeded state
-        ledgers: JSON.parse(document.getElementById('ledgers-data').textContent),
-        teamsMap: JSON.parse(document.getElementById('teams-data').textContent),
-        contractors: JSON.parse(document.getElementById('contractors-data').textContent),
-        weeks: JSON.parse(document.getElementById('weeks-data').textContent),
-        selectedWeek: document.getElementById('selected-week-data').textContent.trim(),
+        ledgers: safeParseSeed('ledgers-data', []),
+        teamsMap: safeParseSeed('teams-data', {}),
+        contractors: safeParseSeed('contractors-data', []),
+        weeks: safeParseSeed('weeks-data', []),
+        selectedWeek: (document.getElementById('selected-week-data')?.textContent || '').trim(),
 
         // UI state
         selectedIds: [],
@@ -687,7 +721,7 @@ function app() {
         sortDir: 'asc',
         toasts: [],
 
-        upload: { weekDate: '', overwrite: false, file: null, fileName: '', previewSrc: null, dragOver: false, busy: false },
+        upload: { pickedDate: '', weekDate: '', overwrite: false, file: null, fileName: '', previewSrc: null, dragOver: false, busy: false },
         crypto: { symbol: 'LTC', txInput: '', busy: false },
         manual: { notes: '', busy: false },
         estimate: { amount: null, price: null },
@@ -822,6 +856,39 @@ function app() {
             await this.loadWeek(this.selectedWeek);
         },
 
+        // ---------- Monday–Sunday week picker ----------
+        openCalendar(e) {
+            // showPicker() only exists in Chromium-based browsers and must
+            // be called from a real user gesture; hovering counts in
+            // Chrome/Edge but not everywhere, so this is a nice-to-have —
+            // clicking the field always opens the native calendar as a
+            // fallback regardless of browser.
+            try {
+                if (e.target.showPicker) e.target.showPicker();
+            } catch (err) { /* ignore — click still works */ }
+        },
+        onPickWeek() {
+            if (!this.upload.pickedDate) { this.upload.weekDate = ''; return; }
+
+            const [y, m, d] = this.upload.pickedDate.split('-').map(Number);
+            const picked = new Date(y, m - 1, d); // local time, avoids UTC day-shift bugs
+
+            const dow = picked.getDay(); // 0 = Sun … 6 = Sat
+            const diffToMonday = dow === 0 ? -6 : 1 - dow;
+            const monday = new Date(picked);
+            monday.setDate(picked.getDate() + diffToMonday);
+            const sunday = new Date(monday);
+            sunday.setDate(monday.getDate() + 6);
+
+            const fmt = (dt, withYear) => dt.toLocaleDateString('en-US', {
+                month: 'short', day: 'numeric', year: withYear ? 'numeric' : undefined
+            });
+
+            this.upload.weekDate = monday.getMonth() === sunday.getMonth()
+                ? `${fmt(monday)} - ${sunday.getDate()}, ${sunday.getFullYear()}`
+                : `${fmt(monday)} - ${fmt(sunday, true)}`;
+        },
+
         // ---------- upload ----------
         handleFileSelect(e) {
             const file = e.target.files[0];
@@ -878,6 +945,7 @@ function app() {
             this.upload.file = null;
             this.upload.fileName = '';
             this.upload.previewSrc = null;
+            this.upload.pickedDate = '';
             this.upload.weekDate = '';
             this.upload.overwrite = false;
         },
