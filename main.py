@@ -74,13 +74,13 @@ async def index(request: Request, selected_week: str = None):
             try:
                 cursor.execute("""
                     SELECT l.id, l.week_date, c.id as contractor_id, c.name as contractor,
-                           l.amount_owed_usd, l.status, l.paid_at_est, l.crypto_tx_id,
+                           l.amount_owed_usd, COALESCE(l.status, 'UNPAID') as status, l.paid_at_est, l.crypto_tx_id,
                            l.crypto_symbol, l.notes
                     FROM weekly_ledgers l
                     JOIN contractors c ON l.contractor_id = c.id
                     WHERE l.week_date = %s
                     ORDER BY
-                        CASE WHEN UPPER(l.status) LIKE '%PAID%' THEN 1 ELSE 0 END ASC,
+                        CASE WHEN UPPER(COALESCE(l.status, 'UNPAID')) LIKE '%PAID%' THEN 1 ELSE 0 END ASC,
                         c.name ASC
                 """, (selected_week,))
                 ledgers = cursor.fetchall()
@@ -141,13 +141,13 @@ async def api_ledgers(week_date: str = None):
         if week_date:
             cursor.execute("""
                 SELECT l.id, l.week_date, c.id as contractor_id, c.name as contractor,
-                       l.amount_owed_usd, l.status, l.paid_at_est, l.crypto_tx_id,
+                       l.amount_owed_usd, COALESCE(l.status, 'UNPAID') as status, l.paid_at_est, l.crypto_tx_id,
                        l.crypto_symbol, l.notes
                 FROM weekly_ledgers l
                 JOIN contractors c ON l.contractor_id = c.id
                 WHERE l.week_date = %s
                 ORDER BY
-                    CASE WHEN UPPER(l.status) LIKE '%PAID%' THEN 1 ELSE 0 END ASC,
+                    CASE WHEN UPPER(COALESCE(l.status, 'UNPAID')) LIKE '%PAID%' THEN 1 ELSE 0 END ASC,
                     c.name ASC
             """, (week_date,))
             ledgers = cursor.fetchall()
@@ -178,7 +178,7 @@ async def contractor_history(contractor_id: int):
         """, (contractor_id,))
         history = cursor.fetchall()
 
-        total_paid = sum(float(r["amount_owed_usd"]) for r in history if "PAID" in r["status"].upper())
+        total_paid = sum(float(r["amount_owed_usd"]) for r in history if "PAID" in (r["status"] or "").upper())
         total_owed = sum(float(r["amount_owed_usd"]) for r in history)
 
         return {
