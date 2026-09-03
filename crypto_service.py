@@ -175,6 +175,15 @@ def verify_eth_tx(tx_hash: str) -> dict:
         if latest_hex:
             confirmations = max(0, int(latest_hex, 16) - int(block_number_hex, 16) + 1)
 
+    if timestamp is None:
+        # Don't guess — an old, replayed txid would look freshly sent if we
+        # ever logged/priced it against "now" instead of the real send time.
+        raise ValueError(
+            "This Ethereum transaction is confirmed, but the exact time it was "
+            "sent couldn't be determined from the block explorer. Refusing to "
+            "guess — try verifying again in a moment."
+        )
+
     return {
         "amount": amount_eth,
         "timestamp": timestamp,
@@ -219,6 +228,18 @@ def verify_btc_tx(tx_hash: str) -> dict:
     timestamp = status.get("block_time")
     confirmations = 0
     block_height = status.get("block_height")
+    block_hash = status.get("block_hash")
+
+    if timestamp is None and block_hash:
+        # Blockstream's tx status almost always includes block_time, but if
+        # it's ever missing, the block endpoint always has "timestamp".
+        try:
+            block_resp = requests.get(f"https://blockstream.info/api/block/{block_hash}", timeout=10)
+            block_resp.raise_for_status()
+            timestamp = block_resp.json().get("timestamp")
+        except Exception as e:
+            print(f"BTC block-time fallback failed for block {block_hash}: {e}")
+
     if block_height:
         try:
             tip_resp = requests.get("https://blockstream.info/api/blocks/tip/height", timeout=10)
@@ -226,6 +247,16 @@ def verify_btc_tx(tx_hash: str) -> dict:
             confirmations = max(0, int(tip_resp.text) - block_height + 1)
         except (requests.RequestException, ValueError):
             confirmations = 1
+
+    if timestamp is None:
+        # We will NOT silently price/log this against "now" — an old,
+        # replayed txid would then look like it was just sent, which is
+        # exactly the wrong direction to be wrong in.
+        raise ValueError(
+            "This Bitcoin transaction is confirmed, but the exact time it was sent "
+            "couldn't be determined from the block explorer. Refusing to guess — "
+            "try verifying again in a moment."
+        )
 
     return {
         "amount": matched_satoshis / 1e8,
@@ -276,6 +307,36 @@ def verify_ltc_tx(tx_hash: str) -> dict:
                         )
                     except ValueError:
                         pass
+
+                if timestamp is None:
+                    # BlockCypher's "confirmed" field is occasionally absent
+                    # even when confirmations > 0. Fall back to the block
+                    # itself, which always has a "time" field.
+                    block_height = data.get("block_height")
+                    if block_height:
+                        try:
+                            block_url = f"https://api.blockcypher.com/v1/ltc/main/blocks/{block_height}"
+                            if LTC_API_KEY:
+                                block_url += f"?token={LTC_API_KEY}"
+                            block_resp = requests.get(block_url, timeout=10)
+                            block_resp.raise_for_status()
+                            block_time_str = block_resp.json().get("time")
+                            if block_time_str:
+                                timestamp = int(
+                                    datetime.fromisoformat(block_time_str.replace("Z", "+00:00")).timestamp()
+                                )
+                        except Exception as e:
+                            print(f"LTC block-time fallback (BlockCypher block {block_height}) failed: {e}")
+
+                if timestamp is None:
+                    # Don't guess. Logging this against "now" would make an
+                    # old, replayed txid look freshly sent.
+                    raise ValueError(
+                        "This Litecoin transaction is confirmed, but the exact time it "
+                        "was sent couldn't be determined. Refusing to guess — try "
+                        "verifying again in a moment."
+                    )
+
                 return {
                     "amount": matched_litoshis / 1e8,
                     "timestamp": timestamp,
@@ -324,6 +385,30 @@ def verify_ltc_tx(tx_hash: str) -> dict:
                 )
             except ValueError:
                 pass
+
+        if timestamp is None:
+            # Same principle as above: fall back to the block's own record
+            # rather than ever defaulting to "now".
+            try:
+                block_resp = requests.get(
+                    f"https://api.blockchair.com/litecoin/dashboards/block/{block_id}", timeout=10
+                )
+                block_resp.raise_for_status()
+                block_info = block_resp.json().get("data", {}).get(str(block_id), {}).get("block", {})
+                block_time_str = block_info.get("time")
+                if block_time_str:
+                    timestamp = int(
+                        datetime.fromisoformat(block_time_str).replace(tzinfo=timezone.utc).timestamp()
+                    )
+            except Exception as e:
+                print(f"LTC block-time fallback (Blockchair block {block_id}) failed: {e}")
+
+        if timestamp is None:
+            raise ValueError(
+                "This Litecoin transaction is confirmed, but the exact time it was "
+                "sent couldn't be determined. Refusing to guess — try verifying "
+                "again in a moment."
+            )
 
         return {
             "amount": matched_litoshis / 1e8,
@@ -487,13 +572,13 @@ def verify_and_price_tx(raw_tx_input: str, symbol: str) -> dict:
     else:
         raise ValueError(f"Symbol '{symbol}' is not currently supported.")
 
-    if result.get("timestamp"):
-        price_usd = get_price_usd_at(symbol_upper, result["timestamp"])
-    else:
-        # Shouldn't normally happen (we require confirmation above), but
-        # don't fail the whole reconciliation just because a block explorer
-        # omitted a timestamp field.
-        price_usd = get_current_price_usd(symbol_upper)
+    # Every verify_*_tx function above now either returns a real send-time
+    # timestamp or raises rather than returning one that's missing/null —
+    # so there is no "else" here. We never want to silently price (or log
+    # paid_at) against the CURRENT price/time instead of the moment the
+    # funds were actually sent; that would make an old, replayed txid look
+    # freshly sent and defeat the entire point of pricing at send-time.
+    price_usd = get_price_usd_at(symbol_upper, result["timestamp"])
 
     return {
         "tx_hash": clean_hash,
