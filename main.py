@@ -45,7 +45,12 @@ async def index(request: Request, selected_week: str = None):
                 FROM weekly_ledgers l
                 JOIN contractors c ON l.contractor_id = c.id
                 WHERE l.week_date = %s
-                ORDER BY c.name ASC
+                ORDER BY 
+                    CASE 
+                        WHEN UPPER(l.status) LIKE '%PAID%' THEN 1 
+                        ELSE 0 
+                    END ASC,
+                    c.name ASC
             """, (selected_week,))
             ledgers = cursor.fetchall()
 
@@ -324,6 +329,7 @@ async def reconcile_crypto(
             "received_usd": round(tx_usd_val, 2),
             "difference": round(tx_usd_val - total_owed, 2)
         }
+
 @app.post("/api/teams")
 async def create_team(team_name: str = Body(...), contractor_names: list[str] = Body(...)):
     conn = get_db()
