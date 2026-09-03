@@ -352,44 +352,92 @@ _COINGECKO_IDS = {"ETH": "ethereum", "BTC": "bitcoin", "LTC": "litecoin"}
 _BINANCE_SYMBOLS = {"ETH": "ETHUSDT", "BTC": "BTCUSDT", "LTC": "LTCUSDT"}
 
 
+def _binance_historical_price(symbol_upper: str, timestamp: int):
+    """Fallback price source: Binance's public kline (candlestick) API has
+    free, no-auth historical data going back years for these pairs, so it
+    covers cases where CoinGecko is rate-limited or briefly missing a
+    window for the free tier. Returns None (never raises) if unavailable."""
+    b_sym = _BINANCE_SYMBOLS.get(symbol_upper)
+    if not b_sym:
+        return None
+    try:
+        start_ms = (timestamp - 300) * 1000
+        end_ms = (timestamp + 300) * 1000
+        url = (
+            f"https://api.binance.com/api/v3/klines?symbol={b_sym}&interval=1m"
+            f"&startTime={start_ms}&endTime={end_ms}&limit=10"
+        )
+        res = requests.get(url, timeout=10).json()
+        if isinstance(res, list) and res:
+            # Each kline: [open_time_ms, open, high, low, close, ...]
+            closest = min(res, key=lambda k: abs((k[0] / 1000) - timestamp))
+            return float(closest[4])  # close price of the nearest 1-minute candle
+    except Exception as e:
+        print(f"Binance historical price fallback failed for {symbol_upper}: {e}")
+    return None
+
+
 def get_price_usd_at(symbol: str, timestamp: int) -> float:
     symbol_upper = symbol.strip().upper()
     cg_id = _COINGECKO_IDS.get(symbol_upper)
     if not cg_id:
         raise ValueError(f"Symbol '{symbol}' is not currently supported.")
 
-    # CoinGecko's market_chart/range returns ~5-minute granularity for
-    # ranges under a day, which is precise enough to price a single payment.
-    window_seconds = 3600
-    from_ts = timestamp - window_seconds
-    to_ts = timestamp + window_seconds
+    errors = []
+
+    # 1) CoinGecko range endpoint — ~5-minute granularity for short ranges.
     try:
+        window_seconds = 3600
+        from_ts = timestamp - window_seconds
+        to_ts = timestamp + window_seconds
         url = (
             f"https://api.coingecko.com/api/v3/coins/{cg_id}/market_chart/range"
             f"?vs_currency=usd&from={from_ts}&to={to_ts}"
         )
-        res = requests.get(url, timeout=10).json()
-        prices = res.get("prices", [])
-        if prices:
-            closest = min(prices, key=lambda p: abs((p[0] / 1000) - timestamp))
-            return float(closest[1])
-    except Exception:
-        pass
+        res = requests.get(url, timeout=10)
+        if res.status_code == 429:
+            errors.append("CoinGecko range: rate-limited (429)")
+        else:
+            res.raise_for_status()
+            prices = res.json().get("prices", [])
+            if prices:
+                closest = min(prices, key=lambda p: abs((p[0] / 1000) - timestamp))
+                return float(closest[1])
+            errors.append("CoinGecko range: no price points returned for this window")
+    except Exception as e:
+        errors.append(f"CoinGecko range: {e}")
 
-    # Fallback: daily historical price (lower precision, but always available).
+    # 2) CoinGecko daily history — lower precision, but a different code
+    # path (and different rate-limit bucket) than the range endpoint above.
     try:
         date_str = datetime.utcfromtimestamp(timestamp).strftime("%d-%m-%Y")
         url = f"https://api.coingecko.com/api/v3/coins/{cg_id}/history?date={date_str}"
-        res = requests.get(url, timeout=10).json()
-        price = res.get("market_data", {}).get("current_price", {}).get("usd")
-        if price:
-            return float(price)
-    except Exception:
-        pass
+        res = requests.get(url, timeout=10)
+        if res.status_code == 429:
+            errors.append("CoinGecko history: rate-limited (429)")
+        else:
+            res.raise_for_status()
+            price = res.json().get("market_data", {}).get("current_price", {}).get("usd")
+            if price:
+                return float(price)
+            errors.append(f"CoinGecko history: no market_data for {date_str}")
+    except Exception as e:
+        errors.append(f"CoinGecko history: {e}")
 
+    # 3) Binance klines — independent provider entirely, so a CoinGecko
+    # outage or rate-limit doesn't block reconciliation.
+    binance_price = _binance_historical_price(symbol_upper, timestamp)
+    if binance_price:
+        return binance_price
+    errors.append("Binance klines: no candle found near this timestamp")
+
+    print(f"get_price_usd_at({symbol_upper}, {timestamp}) failed on every source: {'; '.join(errors)}")
     raise ValueError(
         f"Unable to determine the historical USD price for {symbol_upper} at the "
-        f"time this transaction was sent. Try again in a moment."
+        f"time this transaction was sent (checked CoinGecko and Binance). This is "
+        f"usually a temporary rate limit — try again in a minute. If it keeps "
+        f"failing for this specific transaction, check the Render logs for the "
+        f"exact error."
     )
 
 
