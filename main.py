@@ -178,7 +178,10 @@ async def contractor_history(contractor_id: int):
         """, (contractor_id,))
         history = cursor.fetchall()
 
-        total_paid = sum(float(r["amount_owed_usd"]) for r in history if "PAID" in (r["status"] or "").upper())
+        total_paid = sum(
+            float(r["amount_owed_usd"]) for r in history
+            if (r["status"] or "").upper() in ("PAID", "MANUALLY_PAID")
+        )
         total_owed = sum(float(r["amount_owed_usd"]) for r in history)
 
         return {
