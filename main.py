@@ -80,7 +80,7 @@ async def index(request: Request, selected_week: str = None):
                     JOIN contractors c ON l.contractor_id = c.id
                     WHERE l.week_date = %s
                     ORDER BY
-                        CASE WHEN UPPER(COALESCE(l.status, 'UNPAID')) LIKE '%PAID%' THEN 1 ELSE 0 END ASC,
+                        CASE WHEN UPPER(COALESCE(l.status, 'UNPAID')) IN ('PAID', 'MANUALLY_PAID') THEN 1 ELSE 0 END ASC,
                         c.name ASC
                 """, (selected_week,))
                 ledgers = cursor.fetchall()
@@ -147,7 +147,7 @@ async def api_ledgers(week_date: str = None):
                 JOIN contractors c ON l.contractor_id = c.id
                 WHERE l.week_date = %s
                 ORDER BY
-                    CASE WHEN UPPER(COALESCE(l.status, 'UNPAID')) LIKE '%PAID%' THEN 1 ELSE 0 END ASC,
+                    CASE WHEN UPPER(COALESCE(l.status, 'UNPAID')) IN ('PAID', 'MANUALLY_PAID') THEN 1 ELSE 0 END ASC,
                     c.name ASC
             """, (week_date,))
             ledgers = cursor.fetchall()
