@@ -2,11 +2,17 @@ import os
 import requests
 
 ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY", "")
+LTC_API_KEY = os.getenv("LTC_API_KEY", os.getenv("BLOCKCYPHER_API_KEY", ""))
+
+# Receiving Wallet Addresses
+BTC_RECEIVING_ADDRESS = os.getenv("BTC_RECEIVING_ADDRESS", "bc1qq2xjkur4jkn76g3v7hwtx94r2733l8hr9yfdem").strip()
+LTC_RECEIVING_ADDRESS = os.getenv("LTC_RECEIVING_ADDRESS", "LSzh8EETPhDd7xMaxVu9gYZ8Sa3ucwVphg").strip()
+ETH_RECEIVING_ADDRESS = os.getenv("ETH_RECEIVING_ADDRESS", "0x67803EfDf6EfBcE405275F42242f5f617FAf9194").strip()
 
 def verify_eth_tx(tx_id: str):
     """
     Verifies an Ethereum transaction hash via Etherscan API.
-    Returns (amount_eth, timestamp).
+    Checks that the recipient 'to' address matches the designated receiving address.
     """
     clean_tx = tx_id.strip()
     if not clean_tx or not clean_tx.startswith("0x") or len(clean_tx) != 66:
@@ -24,6 +30,11 @@ def verify_eth_tx(tx_id: str):
     result = data.get("result")
     if not result or not isinstance(result, dict):
         raise ValueError("Ethereum transaction not found or invalid response.")
+
+    # Verify recipient address matches
+    tx_to = str(result.get("to") or "").strip().lower()
+    if tx_to != ETH_RECEIVING_ADDRESS.lower():
+        raise ValueError(f"Transaction recipient ('{tx_to}') does not match expected receiving address '{ETH_RECEIVING_ADDRESS}'.")
 
     value_wei_hex = result.get("value", "0x0")
     try:
@@ -49,7 +60,7 @@ def verify_eth_tx(tx_id: str):
 def verify_btc_tx(tx_id: str):
     """
     Verifies a Bitcoin (BTC) transaction hash via Blockstream Esplora API.
-    Returns (amount_btc, timestamp).
+    Filters outputs to sum only Satoshis sent to target receiving address.
     """
     clean_tx = tx_id.strip()
     if not clean_tx or len(clean_tx) != 64:
@@ -69,37 +80,56 @@ def verify_btc_tx(tx_id: str):
     if not vouts:
         raise ValueError("No output amounts found in Bitcoin transaction.")
 
-    # Sum total output value in Satoshis (1 BTC = 100,000,000 Satoshis)
-    total_satoshis = sum(vout.get("value", 0) for vout in vouts)
-    amount_btc = total_satoshis / 1e8
+    target_addr = BTC_RECEIVING_ADDRESS.lower()
+    matched_satoshis = sum(
+        vout.get("value", 0) for vout in vouts
+        if str(vout.get("scriptpubkey_address", "")).strip().lower() == target_addr
+    )
 
+    if matched_satoshis == 0:
+        raise ValueError(f"No outputs found sent to address '{BTC_RECEIVING_ADDRESS}' in this transaction.")
+
+    amount_btc = matched_satoshis / 1e8
     timestamp = data.get("status", {}).get("block_time")
     return amount_btc, timestamp
 
 def verify_ltc_tx(tx_id: str):
     """
-    Verifies a Litecoin (LTC) transaction hash via BlockCypher / Blockchair API.
-    Returns (amount_ltc, timestamp).
+    Verifies a Litecoin (LTC) transaction hash.
+    Filters outputs to sum only Litoshis sent to target receiving address.
     """
     clean_tx = tx_id.strip()
     if not clean_tx or len(clean_tx) != 64:
         raise ValueError("Invalid Litecoin transaction hash (must be 64 hexadecimal characters).")
 
-    # Primary lookup via BlockCypher API
+    target_addr = LTC_RECEIVING_ADDRESS.lower()
+
+    # Primary lookup: BlockCypher
     url = f"https://api.blockcypher.com/v1/ltc/main/txs/{clean_tx}"
+    if LTC_API_KEY:
+        url += f"?token={LTC_API_KEY}"
+
     try:
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
             data = response.json()
-            total_litoshis = data.get("total", 0)
-            if not total_litoshis and "outputs" in data:
-                total_litoshis = sum(out.get("value", 0) for out in data.get("outputs", []))
-            amount_ltc = total_litoshis / 1e8
-            return amount_ltc, None
+            outputs = data.get("outputs", [])
+            
+            matched_litoshis = sum(
+                out.get("value", 0) for out in outputs
+                if any(str(addr).strip().lower() == target_addr for addr in out.get("addresses", []))
+            )
+
+            if matched_litoshis > 0:
+                return matched_litoshis / 1e8, None
+            elif outputs:
+                raise ValueError(f"No output found sent to address '{LTC_RECEIVING_ADDRESS}' in this transaction.")
+    except ValueError as ve:
+        raise ve
     except Exception:
         pass
 
-    # Fallback lookup via Blockchair API
+    # Fallback lookup: Blockchair
     fallback_url = f"https://api.blockchair.com/litecoin/dashboards/transaction/{clean_tx}"
     try:
         response = requests.get(fallback_url, timeout=10)
@@ -107,13 +137,20 @@ def verify_ltc_tx(tx_id: str):
         data = response.json()
         tx_data = data.get("data", {}).get(clean_tx, {})
         if not tx_data:
-            raise ValueError("Litecoin transaction not found.")
+            raise ValueError("Litecoin transaction not found on Blockchair.")
         
-        total_litoshis = tx_data.get("transaction", {}).get("output_total", 0)
-        amount_ltc = total_litoshis / 1e8
-        return amount_ltc, None
+        outputs = tx_data.get("outputs", [])
+        matched_litoshis = sum(
+            out.get("value", 0) for out in outputs
+            if str(out.get("recipient", "")).strip().lower() == target_addr
+        )
+
+        if matched_litoshis == 0:
+            raise ValueError(f"No output found sent to address '{LTC_RECEIVING_ADDRESS}' in this transaction.")
+
+        return matched_litoshis / 1e8, None
     except requests.RequestException as e:
-        raise ValueError(f"Failed to verify Litecoin transaction: {str(e)}")
+        raise ValueError(f"Failed to verify Litecoin transaction on Blockchair: {str(e)}")
 
 def get_crypto_price_usd(symbol: str) -> float:
     """Fetches real-time crypto price in USD (ETH, BTC, LTC)."""
@@ -134,7 +171,6 @@ def get_crypto_price_usd(symbol: str) -> float:
         except Exception:
             pass
 
-    # Fallback to Binance Ticker API
     binance_symbols = {
         "ETH": "ETHUSDT",
         "BTC": "BTCUSDT",
