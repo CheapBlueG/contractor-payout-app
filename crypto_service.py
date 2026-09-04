@@ -1,5 +1,6 @@
 import os
 import re
+import time
 from datetime import datetime, timezone
 
 import requests
@@ -114,24 +115,39 @@ def _require_etherscan_key() -> str:
 
 
 def _eth_rpc(url: str) -> dict:
-    response = requests.get(url, timeout=10)
-    response.raise_for_status()
-    data = response.json()
+    """Calls Etherscan and retries on rate-limit responses specifically.
+    A single verify_eth_tx() run makes several sequential Etherscan calls
+    (tx, receipt, block, latest-block-number) — on a free-tier key capped
+    at 3 req/sec, those can land in the same window and trip the limit
+    even on someone's very first attempt. Retrying with a short backoff
+    only for the rate-limit case (never for a genuine "not found" or auth
+    error) fixes that without masking real problems."""
+    max_attempts = 4
+    backoff_seconds = 0.4
 
-    if "error" in data:
-        raise ValueError(f"Etherscan API Error: {data['error'].get('message', 'Unknown API error')}")
+    for attempt in range(max_attempts):
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
 
-    # Etherscan's auth/rate-limit/deprecation failures come back through the
-    # "status"/"message" envelope even on these proxy (JSON-RPC-style)
-    # endpoints, with `result` as a bare STRING like "Missing/Invalid API
-    # Key" or "You are using a deprecated V1 endpoint..." instead of the
-    # expected object. Left unchecked, callers see result != a dict and
-    # conclude "transaction not found" — which is wrong and hides the real
-    # problem. Surface it directly instead.
-    if data.get("status") == "0" and isinstance(data.get("result"), str):
-        raise ValueError(f"Etherscan API error: {data['result']}")
+        if "error" in data:
+            raise ValueError(f"Etherscan API Error: {data['error'].get('message', 'Unknown API error')}")
 
-    return data
+        # Etherscan's auth/rate-limit/deprecation failures come back through
+        # the "status"/"message" envelope even on these proxy (JSON-RPC-style)
+        # endpoints, with `result` as a bare STRING instead of the expected
+        # object. Left unchecked, callers see result != a dict and conclude
+        # "transaction not found" — which is wrong and hides the real problem.
+        if data.get("status") == "0" and isinstance(data.get("result"), str):
+            result_str = data["result"]
+            if "rate limit" in result_str.lower() and attempt < max_attempts - 1:
+                time.sleep(backoff_seconds * (attempt + 1))
+                continue
+            raise ValueError(f"Etherscan API error: {result_str}")
+
+        return data
+
+    raise ValueError("Etherscan API error: rate limit reached and retries were exhausted.")
 
 
 def verify_eth_tx(tx_hash: str) -> dict:
@@ -160,6 +176,13 @@ def verify_eth_tx(tx_hash: str) -> dict:
     # A transaction can be mined but still have reverted (spent gas, moved
     # nothing). eth_getTransactionByHash alone can't tell you that — you
     # need the receipt's status field.
+    #
+    # This function makes up to 4 sequential Etherscan calls total. A short
+    # pause between them keeps a single verification comfortably under a
+    # free-tier key's 3-req/sec cap, instead of relying only on _eth_rpc's
+    # reactive retry for a limit that a fresh key can trip on its very
+    # first use.
+    time.sleep(0.35)
     receipt_data = _eth_rpc(
         f"{base}?chainid={chainid}&module=proxy&action=eth_getTransactionReceipt&txhash={clean_tx}&apikey={api_key}"
     )
@@ -193,6 +216,7 @@ def verify_eth_tx(tx_hash: str) -> dict:
     timestamp = None
     confirmations = 0
     if block_number_hex:
+        time.sleep(0.35)
         block_data = _eth_rpc(
             f"{base}?chainid={chainid}&module=proxy&action=eth_getBlockByNumber&tag={block_number_hex}&boolean=false&apikey={api_key}"
         )
@@ -200,6 +224,7 @@ def verify_eth_tx(tx_hash: str) -> dict:
         if "timestamp" in block_result:
             timestamp = int(block_result["timestamp"], 16)
 
+        time.sleep(0.35)
         latest_data = _eth_rpc(f"{base}?chainid={chainid}&module=proxy&action=eth_blockNumber&apikey={api_key}")
         latest_hex = latest_data.get("result")
         if latest_hex:
