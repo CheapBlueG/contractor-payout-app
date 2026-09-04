@@ -100,28 +100,58 @@ def extract_tx_hash(raw_input: str, symbol: str) -> str:
 # sender already sent the right amount never counts against them.
 # --------------------------------------------------------------------------
 
+def _require_etherscan_key() -> str:
+    key = ETHERSCAN_API_KEY.strip()
+    if not key:
+        raise ValueError(
+            "ETHERSCAN_API_KEY is not configured on the server. Etherscan "
+            "deprecated their old free/keyless API in August 2025 — an API key "
+            "is now required for every request. Get one free at etherscan.io "
+            "(Account -> API Keys) and set ETHERSCAN_API_KEY in Render's "
+            "Environment tab, then redeploy."
+        )
+    return key
+
+
 def _eth_rpc(url: str) -> dict:
     response = requests.get(url, timeout=10)
     response.raise_for_status()
     data = response.json()
+
     if "error" in data:
         raise ValueError(f"Etherscan API Error: {data['error'].get('message', 'Unknown API error')}")
+
+    # Etherscan's auth/rate-limit/deprecation failures come back through the
+    # "status"/"message" envelope even on these proxy (JSON-RPC-style)
+    # endpoints, with `result` as a bare STRING like "Missing/Invalid API
+    # Key" or "You are using a deprecated V1 endpoint..." instead of the
+    # expected object. Left unchecked, callers see result != a dict and
+    # conclude "transaction not found" — which is wrong and hides the real
+    # problem. Surface it directly instead.
+    if data.get("status") == "0" and isinstance(data.get("result"), str):
+        raise ValueError(f"Etherscan API error: {data['result']}")
+
     return data
 
 
 def verify_eth_tx(tx_hash: str) -> dict:
-    """Verifies a native ETH transfer via Etherscan. ERC-20 transfers are
-    rejected — their decimals and USD pricing can't be safely inferred
-    generically, so token payments should be reconciled manually."""
+    """Verifies a native ETH transfer via Etherscan's API V2 (mainnet,
+    chainid=1). ERC-20 transfers are rejected — their decimals and USD
+    pricing can't be safely inferred generically, so token payments should
+    be reconciled manually."""
     target_addr = get_eth_address().lower()
     clean_tx = tx_hash.strip().lower()
     if not _ETH_HASH_RE.fullmatch(clean_tx):
         raise ValueError("Invalid Ethereum transaction hash format (must be 0x + 64 hex characters).")
 
-    base = "https://api.etherscan.io/api"
+    api_key = _require_etherscan_key()
+    # Etherscan fully deprecated the old V1 base URL (api.etherscan.io/api)
+    # on 2025-08-15. V2 requires a chainid query param; 1 = Ethereum mainnet.
+    base = "https://api.etherscan.io/v2/api"
+    chainid = 1
 
     tx_data = _eth_rpc(
-        f"{base}?module=proxy&action=eth_getTransactionByHash&txhash={clean_tx}&apikey={ETHERSCAN_API_KEY}"
+        f"{base}?chainid={chainid}&module=proxy&action=eth_getTransactionByHash&txhash={clean_tx}&apikey={api_key}"
     )
     result = tx_data.get("result")
     if not result or not isinstance(result, dict):
@@ -131,7 +161,7 @@ def verify_eth_tx(tx_hash: str) -> dict:
     # nothing). eth_getTransactionByHash alone can't tell you that — you
     # need the receipt's status field.
     receipt_data = _eth_rpc(
-        f"{base}?module=proxy&action=eth_getTransactionReceipt&txhash={clean_tx}&apikey={ETHERSCAN_API_KEY}"
+        f"{base}?chainid={chainid}&module=proxy&action=eth_getTransactionReceipt&txhash={clean_tx}&apikey={api_key}"
     )
     receipt = receipt_data.get("result")
     if not receipt:
@@ -164,13 +194,13 @@ def verify_eth_tx(tx_hash: str) -> dict:
     confirmations = 0
     if block_number_hex:
         block_data = _eth_rpc(
-            f"{base}?module=proxy&action=eth_getBlockByNumber&tag={block_number_hex}&boolean=false&apikey={ETHERSCAN_API_KEY}"
+            f"{base}?chainid={chainid}&module=proxy&action=eth_getBlockByNumber&tag={block_number_hex}&boolean=false&apikey={api_key}"
         )
         block_result = block_data.get("result") or {}
         if "timestamp" in block_result:
             timestamp = int(block_result["timestamp"], 16)
 
-        latest_data = _eth_rpc(f"{base}?module=proxy&action=eth_blockNumber&apikey={ETHERSCAN_API_KEY}")
+        latest_data = _eth_rpc(f"{base}?chainid={chainid}&module=proxy&action=eth_blockNumber&apikey={api_key}")
         latest_hex = latest_data.get("result")
         if latest_hex:
             confirmations = max(0, int(latest_hex, 16) - int(block_number_hex, 16) + 1)
