@@ -426,6 +426,7 @@ async def reconcile_crypto(
     try:
         clean_hash = extract_tx_hash(tx_id, symbol)
     except ValueError as err:
+        print(f"reconcile-crypto: hash extraction failed for input '{tx_id}' ({symbol}): {err}")
         return JSONResponse(status_code=400, content={"status": "error", "message": str(err)})
 
     conn = None
@@ -456,8 +457,10 @@ async def reconcile_crypto(
         try:
             verification = verify_and_price_tx(clean_hash, symbol)
         except ValueError as err:
+            print(f"reconcile-crypto: verification failed for {symbol.upper()} tx {clean_hash}: {err}")
             return JSONResponse(status_code=400, content={"status": "error", "message": str(err)})
         except Exception as err:
+            print(f"reconcile-crypto: UNEXPECTED error verifying {symbol.upper()} tx {clean_hash}: {err}")
             return JSONResponse(status_code=500, content={"status": "error", "message": f"Unexpected verification error: {str(err)}"})
 
         tx_usd_val = verification["usd_value"]
@@ -466,14 +469,11 @@ async def reconcile_crypto(
         tolerance = max(1.0, total_owed * 0.01)
 
         if abs(tx_usd_val - total_owed) <= tolerance:
-            # Log the moment the funds actually left the sender's wallet
-            # (the tx's own block timestamp), not the moment someone
-            # clicked "Verify" — a slow reconciler shouldn't make the
-            # sender look late.
-            if verification.get("timestamp"):
-                paid_at_est = unix_to_est(verification["timestamp"])
-            else:
-                paid_at_est = get_est_now()
+            # crypto_service guarantees verification["timestamp"] is a real
+            # send-time (it raises instead of returning one that's missing),
+            # so this is always the actual moment the funds left the
+            # sender's wallet — never the moment someone clicked "Verify".
+            paid_at_est = unix_to_est(verification["timestamp"])
 
             cursor.execute(f"""
                 UPDATE weekly_ledgers
