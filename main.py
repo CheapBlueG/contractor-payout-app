@@ -416,6 +416,8 @@ async def reconcile_crypto(
     ledger_ids: list[int] = Body(...),
     tx_id: str = Body(...),
     symbol: str = Body(...),
+    override: bool = Body(False),
+    override_note: str = Body(""),
 ):
     if not ledger_ids or not tx_id:
         return JSONResponse(status_code=400, content={"status": "error", "message": "Missing ledger selection or TxID."})
@@ -467,22 +469,44 @@ async def reconcile_crypto(
         # 1% tolerance with a $1 floor, instead of a flat $5 that doesn't
         # scale with the size of the payment.
         tolerance = max(1.0, total_owed * 0.01)
+        is_match = abs(tx_usd_val - total_owed) <= tolerance
 
-        if abs(tx_usd_val - total_owed) <= tolerance:
+        if is_match or override:
             # crypto_service guarantees verification["timestamp"] is a real
             # send-time (it raises instead of returning one that's missing),
             # so this is always the actual moment the funds left the
             # sender's wallet — never the moment someone clicked "Verify".
             paid_at_est = unix_to_est(verification["timestamp"])
 
-            cursor.execute(f"""
-                UPDATE weekly_ledgers
-                SET status = 'PAID', paid_at_est = %s, crypto_tx_id = %s, crypto_symbol = %s
-                WHERE id IN ({placeholders})
-            """, [paid_at_est, clean_hash, symbol.upper()] + ledger_ids)
+            override_applied = override and not is_match
+            notes_value = None
+            if override_applied:
+                direction = "underpaid" if tx_usd_val < total_owed else "overpaid"
+                shortfall = abs(tx_usd_val - total_owed)
+                notes_value = (
+                    f"Crypto {direction} by ${shortfall:.2f} (received ${tx_usd_val:.2f} "
+                    f"of ${total_owed:.2f} owed) — manually overridden and approved."
+                )
+                if override_note.strip():
+                    notes_value += f" Note: {override_note.strip()}"
+
+            if notes_value:
+                cursor.execute(f"""
+                    UPDATE weekly_ledgers
+                    SET status = 'PAID', paid_at_est = %s, crypto_tx_id = %s, crypto_symbol = %s, notes = %s
+                    WHERE id IN ({placeholders})
+                """, [paid_at_est, clean_hash, symbol.upper(), notes_value] + ledger_ids)
+            else:
+                cursor.execute(f"""
+                    UPDATE weekly_ledgers
+                    SET status = 'PAID', paid_at_est = %s, crypto_tx_id = %s, crypto_symbol = %s
+                    WHERE id IN ({placeholders})
+                """, [paid_at_est, clean_hash, symbol.upper()] + ledger_ids)
+
             conn.commit()
             return {
                 "status": "matched",
+                "override_applied": override_applied,
                 "total_owed": round(total_owed, 2),
                 "received_usd": round(tx_usd_val, 2),
                 "price_usd_used": round(verification["price_usd_used"], 6),
