@@ -101,29 +101,30 @@ def add_credit(cursor, contractor_id: int, amount: float, reason: str, ledger_id
     )
 
 
-def apply_credit_to_contractor(cursor, contractor_id: int, only_week: str = None):
-    """Draws a contractor's available credit against their unpaid rows
-    (optionally restricted to one week), oldest row first. Returns the
-    list of ledger ids that were touched. A row whose net due reaches zero
-    is marked PAID with method CREDIT."""
+def apply_credit_to_rows(cursor, contractor_id: int, ledger_ids, max_amount: float = None):
+    """Deducts from a contractor's advance balance against SPECIFIC unpaid
+    rows the person chose, oldest first, up to max_amount (or the whole
+    balance). Nothing here runs on its own — it's only called when someone
+    explicitly asks to use the balance. Returns (applied_total, touched_ids).
+    A row whose net due reaches zero is marked PAID with method CREDIT."""
     cursor.execute("SELECT COALESCE(credit_balance, 0) AS bal FROM contractors WHERE id = %s", (contractor_id,))
     row = cursor.fetchone()
     available = money(row["bal"]) if row else 0.0
-    if available <= 0:
-        return []
+    if max_amount is not None:
+        available = min(available, money(max_amount))
+    if available <= 0 or not ledger_ids:
+        return 0.0, []
 
-    params = [contractor_id]
-    week_clause = ""
-    if only_week:
-        week_clause = " AND week_date = %s"
-        params.append(only_week)
+    placeholders = ",".join(["%s"] * len(ledger_ids))
     cursor.execute(
         f"""SELECT id, week_date, amount_owed_usd, COALESCE(credit_applied_usd, 0) AS credit_applied_usd
             FROM weekly_ledgers
-            WHERE contractor_id = %s AND UPPER(COALESCE(status, 'UNPAID')) NOT IN ('PAID', 'MANUALLY_PAID'){week_clause}
+            WHERE contractor_id = %s AND id IN ({placeholders})
+              AND UPPER(COALESCE(status, 'UNPAID')) NOT IN ('PAID', 'MANUALLY_PAID')
             ORDER BY id ASC""",
-        params,
+        [contractor_id] + list(ledger_ids),
     )
+    applied_total = 0.0
     touched = []
     for led in cursor.fetchall():
         if available <= 0:
@@ -133,23 +134,17 @@ def apply_credit_to_contractor(cursor, contractor_id: int, only_week: str = None
             continue
         apply_amt = min(available, net_due)
         new_applied = money(float(led["credit_applied_usd"]) + apply_amt)
-        fully_covered = money(net_due - apply_amt) == 0
-
-        if fully_covered:
+        if money(net_due - apply_amt) == 0:
             cursor.execute(
                 """UPDATE weekly_ledgers
                    SET credit_applied_usd = %s, status = 'PAID', payment_method = 'CREDIT',
                        amount_paid_usd = amount_owed_usd, paid_at_est = %s,
                        notes = CONCAT_WS(' ', notes, %s)
                    WHERE id = %s""",
-                (new_applied, get_est_now(), "Covered by advance credit.", led["id"]),
+                (new_applied, get_est_now(), "Settled from advance balance.", led["id"]),
             )
         else:
-            cursor.execute(
-                "UPDATE weekly_ledgers SET credit_applied_usd = %s WHERE id = %s",
-                (new_applied, led["id"]),
-            )
-
+            cursor.execute("UPDATE weekly_ledgers SET credit_applied_usd = %s WHERE id = %s", (new_applied, led["id"]))
         cursor.execute(
             "UPDATE contractors SET credit_balance = COALESCE(credit_balance, 0) - %s WHERE id = %s",
             (apply_amt, contractor_id),
@@ -157,24 +152,12 @@ def apply_credit_to_contractor(cursor, contractor_id: int, only_week: str = None
         cursor.execute(
             """INSERT INTO credit_transactions (contractor_id, amount_usd, reason, ledger_id, created_at_est)
                VALUES (%s, %s, %s, %s, %s)""",
-            (contractor_id, -apply_amt, f"Applied to {led['week_date']}", led["id"], get_est_now()),
+            (contractor_id, -apply_amt, f"Deducted against {led['week_date']}", led["id"], get_est_now()),
         )
         available = money(available - apply_amt)
+        applied_total = money(applied_total + apply_amt)
         touched.append(led["id"])
-    return touched
-
-
-def apply_credit_for_week(cursor, week_date: str):
-    cursor.execute(
-        """SELECT DISTINCT l.contractor_id FROM weekly_ledgers l
-           JOIN contractors c ON c.id = l.contractor_id
-           WHERE l.week_date = %s AND COALESCE(c.credit_balance, 0) > 0""",
-        (week_date,),
-    )
-    touched = []
-    for r in cursor.fetchall():
-        touched += apply_credit_to_contractor(cursor, r["contractor_id"], only_week=week_date)
-    return touched
+    return applied_total, touched
 
 
 # --------------------------------------------------------------------------
@@ -403,10 +386,8 @@ async def upload_weekly_image(file: UploadFile = File(...), week_date: str = For
         if overwrite:
             cursor.execute("DELETE FROM weekly_ledgers WHERE week_date = %s", (clean_week_date,))
         insert_week_rows(cursor, clean_week_date, records)
-        credited = apply_credit_for_week(cursor, clean_week_date)
         conn.commit()
-        return JSONResponse({"status": "success", "extracted_count": len(records), "week_date": clean_week_date,
-                             "credit_rows_touched": len(credited)})
+        return JSONResponse({"status": "success", "extracted_count": len(records), "week_date": clean_week_date})
     finally:
         if conn:
             conn.close()
@@ -426,10 +407,8 @@ async def confirm_upload(payload: dict = Body(...)):
         if payload.get("overwrite", False):
             cursor.execute("DELETE FROM weekly_ledgers WHERE week_date = %s", (clean_week_date,))
         insert_week_rows(cursor, clean_week_date, records, payload.get("mappings", {}))
-        credited = apply_credit_for_week(cursor, clean_week_date)
         conn.commit()
-        return {"status": "success", "extracted_count": len(records), "week_date": clean_week_date,
-                "credit_rows_touched": len(credited)}
+        return {"status": "success", "extracted_count": len(records), "week_date": clean_week_date}
     finally:
         if conn:
             conn.close()
@@ -468,7 +447,7 @@ async def mark_paid_manual(payload: dict = Body(...)):
     method = str(payload.get("method", "OTHER")).strip().upper()
     notes = str(payload.get("notes", "") or "").strip()
     override = bool(payload.get("override", False))
-    bank_excess = bool(payload.get("bank_excess", True))
+    bank_excess = bool(payload.get("bank_excess", False))
     try:
         amount_paid = money(payload.get("amount_paid"))
     except (TypeError, ValueError):
@@ -523,10 +502,6 @@ async def mark_paid_manual(payload: dict = Body(...)):
                 (now_est, row_notes or None, method, shares[r["id"]], r["id"]),
             )
 
-        # Freshly banked credit may cover other unpaid weeks for this contractor.
-        if excess_credited:
-            apply_credit_to_contractor(cursor, next(iter(contractor_ids)))
-
         conn.commit()
         return {"status": "success", "method": method, "amount_paid": amount_paid, "total_owed": total_due,
                 "difference": difference, "excess_credited": excess_credited, "paid_at_est": now_est}
@@ -542,7 +517,7 @@ async def reconcile_crypto(
     symbol: str = Body(...),
     override: bool = Body(False),
     override_note: str = Body(""),
-    bank_excess: bool = Body(True),
+    bank_excess: bool = Body(False),
 ):
     if not ledger_ids or not tx_id:
         return JSONResponse(status_code=400, content={"status": "error", "message": "Select rows and paste a transaction first."})
@@ -638,8 +613,6 @@ async def reconcile_crypto(
                    WHERE id = %s""",
                 (paid_at_est, clean_hash, effective_symbol, effective_symbol, shares[r["id"]], notes_value, r["id"]),
             )
-        if excess_credited:
-            apply_credit_to_contractor(cursor, next(iter(contractor_ids)))
         conn.commit()
         return {"status": "matched", "override_applied": override_applied, "excess_credited": excess_credited,
                 "paid_at_est": paid_at_est, **common}
@@ -666,12 +639,11 @@ async def credits_add(payload: dict = Body(...)):
     try:
         conn = get_db()
         cursor = db_cursor(conn)
-        add_credit(cursor, int(contractor_id), amount, f"Advance payment recorded{': ' + note if note else ''}")
-        touched = apply_credit_to_contractor(cursor, int(contractor_id))
+        add_credit(cursor, int(contractor_id), amount, f"Extra received{': ' + note if note else ''}")
         cursor.execute("SELECT COALESCE(credit_balance, 0) AS bal FROM contractors WHERE id = %s", (contractor_id,))
         bal = money(cursor.fetchone()["bal"])
         conn.commit()
-        return {"status": "success", "credit_balance": bal, "rows_covered": len(touched)}
+        return {"status": "success", "credit_balance": bal}
     finally:
         if conn:
             conn.close()
@@ -702,18 +674,31 @@ async def credits_adjust(payload: dict = Body(...)):
             conn.close()
 
 
-@app.post("/api/credits/apply-week")
-async def credits_apply_week(payload: dict = Body(...)):
-    week_date = (payload.get("week_date") or "").strip()
-    if not week_date:
-        return JSONResponse(status_code=400, content={"status": "error", "message": "week_date is required."})
+@app.post("/api/credits/apply")
+async def credits_apply(payload: dict = Body(...)):
+    """Explicitly deduct from ONE contractor's advance balance against the
+    rows the person selected. Refuses mixed-contractor selections."""
+    ledger_ids = [int(x) for x in payload.get("ledger_ids", [])]
+    max_amount = payload.get("amount")
+    if not ledger_ids:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Select the rows to deduct against first."})
     conn = None
     try:
         conn = get_db()
         cursor = db_cursor(conn)
-        touched = apply_credit_for_week(cursor, week_date)
+        rows, total_due, contractor_ids = selection_totals(cursor, ledger_ids)
+        if not rows:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Every selected row is already settled."})
+        if len(contractor_ids) != 1:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Advance balance belongs to one contractor — select rows for just one person."})
+        cid = next(iter(contractor_ids))
+        applied, touched = apply_credit_to_rows(cursor, cid, ledger_ids, money(max_amount) if max_amount not in (None, "") else None)
+        cursor.execute("SELECT COALESCE(credit_balance, 0) AS bal FROM contractors WHERE id = %s", (cid,))
+        bal = money(cursor.fetchone()["bal"])
         conn.commit()
-        return {"status": "success", "rows_touched": len(touched)}
+        if applied <= 0:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "No advance balance available to deduct."})
+        return {"status": "success", "applied": applied, "rows_touched": len(touched), "credit_balance": bal, "remaining_due": money(total_due - applied)}
     finally:
         if conn:
             conn.close()
