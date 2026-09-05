@@ -93,6 +93,62 @@ def extract_tx_hash(raw_input: str, symbol: str) -> str:
 
 
 # --------------------------------------------------------------------------
+# Auto-detecting which coin a pasted hash/link refers to.
+#
+# A 0x-prefixed 64-hex hash is unambiguously Ethereum. A bare 64-hex hash
+# (BTC and LTC hashes are the identical format) is ambiguous on its own —
+# but when the input is a link rather than a raw hash, the explorer's
+# domain/path tells us which chain it's for. This lets someone paste a
+# link without also having to remember to flip the coin dropdown first.
+# --------------------------------------------------------------------------
+
+_EXPLORER_SYMBOL_HINTS = [
+    ("etherscan.io", "ETH"),
+    ("blockscout.com", "ETH"),
+    ("ethplorer.io", "ETH"),
+    ("blockchair.com/ethereum", "ETH"),
+    ("blockchair.com/bitcoin-cash", None),  # explicitly NOT bitcoin — avoid a "bitcoin" substring false match below
+    ("blockchair.com/litecoin", "LTC"),
+    ("blockchair.com/bitcoin", "BTC"),
+    ("blockstream.info", "BTC"),
+    ("mempool.space", "BTC"),
+    ("btc.com", "BTC"),
+    ("blockcypher.com/btc", "BTC"),
+    ("live.blockcypher.com/btc", "BTC"),
+    ("blockcypher.com/ltc", "LTC"),
+    ("live.blockcypher.com/ltc", "LTC"),
+    ("litecoinblockexplorer.net", "LTC"),
+    ("chain.so/tx/ltc", "LTC"),
+    ("chain.so/tx/btc", "BTC"),
+    ("sochain.com/tx/ltc", "LTC"),
+    ("sochain.com/tx/btc", "BTC"),
+]
+
+
+def detect_symbol_from_input(raw_input: str):
+    """Best-effort coin detection from a pasted hash or explorer link.
+    Returns 'ETH', 'BTC', 'LTC', or None if it genuinely can't tell (e.g. a
+    bare hash with no coin-specific context) — callers should fall back to
+    whatever the person selected in the dropdown in that case, never force
+    a guess when there's no real signal."""
+    text = (raw_input or "").strip()
+    if not text:
+        return None
+
+    if _ETH_HASH_RE.search(text):
+        return "ETH"
+
+    lower = text.lower()
+    # Longest/most-specific hints first so e.g. "blockchair.com/litecoin"
+    # matches before a broader "blockchair.com" pattern ever could.
+    for hint, symbol in sorted(_EXPLORER_SYMBOL_HINTS, key=lambda h: -len(h[0])):
+        if hint in lower:
+            return symbol
+
+    return None
+
+
+# --------------------------------------------------------------------------
 # Chain lookups. Each returns a dict:
 #   { amount, timestamp, confirmations, explorer_url }
 # `timestamp` is the unix time the transaction was mined/confirmed — i.e.
@@ -247,22 +303,45 @@ def verify_eth_tx(tx_hash: str) -> dict:
     }
 
 
+_BTC_ESPLORA_HOSTS = ["https://blockstream.info/api", "https://mempool.space/api"]
+
+
+def _esplora_get(path: str):
+    """GETs `path` from every known Esplora-compatible host in order
+    (Blockstream, mempool.space — they run the identical open-source API,
+    so responses are interchangeable) and returns the first success.
+    Raises ValueError only if every host fails; a 404 from any host is
+    treated as a definitive "not found", not a reason to try the next one,
+    since that's a real answer rather than an outage."""
+    last_error = None
+    for host in _BTC_ESPLORA_HOSTS:
+        try:
+            response = requests.get(f"{host}{path}", timeout=10)
+            if response.status_code == 404:
+                return None, host  # definitive: this host confirms it doesn't exist
+            if response.status_code == 429:
+                last_error = f"{host}: rate-limited (429)"
+                continue
+            response.raise_for_status()
+            return response.json(), host
+        except requests.RequestException as e:
+            last_error = f"{host}: {e}"
+            continue
+    raise ValueError(f"Failed to communicate with any Bitcoin blockchain API ({last_error}).")
+
+
 def verify_btc_tx(tx_hash: str) -> dict:
-    """Verifies a Bitcoin transaction via the Blockstream Esplora API."""
+    """Verifies a Bitcoin transaction via Esplora-compatible APIs
+    (Blockstream, with mempool.space as a fallback if Blockstream is
+    rate-limiting or unreachable — both run the same software)."""
     target_addr = get_btc_address().lower()
     clean_tx = tx_hash.strip().lower()
     if not _HEX64_RE.fullmatch(clean_tx):
         raise ValueError("Invalid Bitcoin transaction hash (must be 64 hexadecimal characters).")
 
-    url = f"https://blockstream.info/api/tx/{clean_tx}"
-    try:
-        response = requests.get(url, timeout=10)
-        if response.status_code == 404:
-            raise ValueError("Bitcoin transaction not found.")
-        response.raise_for_status()
-        data = response.json()
-    except requests.RequestException as e:
-        raise ValueError(f"Failed to communicate with the Bitcoin blockchain API: {str(e)}")
+    data, used_host = _esplora_get(f"/tx/{clean_tx}")
+    if data is None:
+        raise ValueError("Bitcoin transaction not found.")
 
     vouts = data.get("vout", [])
     matched_satoshis = sum(
@@ -286,22 +365,27 @@ def verify_btc_tx(tx_hash: str) -> dict:
     block_hash = status.get("block_hash")
 
     if timestamp is None and block_hash:
-        # Blockstream's tx status almost always includes block_time, but if
-        # it's ever missing, the block endpoint always has "timestamp".
+        # The tx status almost always includes block_time, but if it's ever
+        # missing, the block endpoint always has "timestamp".
         try:
-            block_resp = requests.get(f"https://blockstream.info/api/block/{block_hash}", timeout=10)
-            block_resp.raise_for_status()
-            timestamp = block_resp.json().get("timestamp")
-        except Exception as e:
+            block_data, _ = _esplora_get(f"/block/{block_hash}")
+            if block_data:
+                timestamp = block_data.get("timestamp")
+        except ValueError as e:
             print(f"BTC block-time fallback failed for block {block_hash}: {e}")
 
     if block_height:
-        try:
-            tip_resp = requests.get("https://blockstream.info/api/blocks/tip/height", timeout=10)
-            tip_resp.raise_for_status()
-            confirmations = max(0, int(tip_resp.text) - block_height + 1)
-        except (requests.RequestException, ValueError):
-            confirmations = 1
+        # /blocks/tip/height returns plain text (a bare number), not JSON,
+        # so this can't go through _esplora_get — fetch it directly instead.
+        confirmations = 1
+        for host in _BTC_ESPLORA_HOSTS:
+            try:
+                tip_resp = requests.get(f"{host}/blocks/tip/height", timeout=10)
+                tip_resp.raise_for_status()
+                confirmations = max(0, int(tip_resp.text) - block_height + 1)
+                break
+            except (requests.RequestException, ValueError):
+                continue
 
     if timestamp is None:
         # We will NOT silently price/log this against "now" — an old,
