@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from database import init_db, get_db, get_est_now, unix_to_est
-from crypto_service import extract_tx_hash, verify_and_price_tx, get_current_price_usd, detect_symbol_from_input
+from crypto_service import extract_tx_hash, verify_and_price_tx, get_current_price_usd, detect_symbol_from_input, symbol_chain_family
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -48,7 +48,7 @@ def safe_json(value) -> str:
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request, selected_week: str = None):
     ledgers, contractors, weeks = [], [], []
-    teams_map = {}
+    teams = []
 
     # Each block below is independent on purpose. The previous version ran
     # every query in one try/except, so if ANY single query failed (a bad
@@ -88,15 +88,24 @@ async def index(request: Request, selected_week: str = None):
                 print(f"Error fetching ledgers for week '{selected_week}': {e}")
 
         try:
+            # Teams now carry their id and member list together, instead of
+            # a bare {name: [members]} dict — editing a team (adding or
+            # removing a member) needs the id, and the old shape had no
+            # way to get one.
+            cursor.execute("SELECT id, name FROM teams ORDER BY name ASC")
+            team_rows = cursor.fetchall()
+            teams = [{"id": t["id"], "name": t["name"], "members": []} for t in team_rows]
+            team_index = {t["id"]: t for t in teams}
+
             cursor.execute("""
-                SELECT t.name as team_name, c.name as contractor_name
-                FROM teams t
-                JOIN team_members tm ON t.id = tm.team_id
+                SELECT tm.team_id, c.name as contractor_name
+                FROM team_members tm
                 JOIN contractors c ON tm.contractor_id = c.id
-                ORDER BY t.name ASC, c.name ASC
+                ORDER BY c.name ASC
             """)
             for row in cursor.fetchall():
-                teams_map.setdefault(row["team_name"], []).append(row["contractor_name"])
+                if row["team_id"] in team_index:
+                    team_index[row["team_id"]]["members"].append(row["contractor_name"])
         except Exception as e:
             print(f"Error fetching teams: {e}")
 
@@ -117,7 +126,7 @@ async def index(request: Request, selected_week: str = None):
         name="index.html",
         context={
             "ledgers_json": safe_json(ledgers),
-            "teams_json": safe_json(teams_map),
+            "teams_json": safe_json(teams),
             "contractors_json": safe_json([{"id": c["id"], "name": c["name"]} for c in contractors]),
             "weeks_json": safe_json(weeks),
             "selected_week": selected_week or "",
@@ -429,9 +438,18 @@ async def reconcile_crypto(
     # to flip the coin selector first. A bare hash with no coin-specific
     # context can't be auto-detected (BTC/LTC hashes look identical), so
     # detection returning None just means "trust the dropdown" as before.
+    #
+    # Only override across chain FAMILIES (e.g. a Litecoin link while ETH
+    # is selected). ETH, USDT, USDC, and DAI all use identical-looking
+    # etherscan.io links, so a plain link there can't tell us which of the
+    # four was intended — in that case keep whatever specific token the
+    # dropdown already had selected rather than collapsing it to "ETH".
     detected_symbol = detect_symbol_from_input(tx_id)
-    symbol_auto_corrected = bool(detected_symbol and detected_symbol != symbol.strip().upper())
-    effective_symbol = detected_symbol or symbol
+    current_symbol_upper = symbol.strip().upper()
+    symbol_auto_corrected = bool(
+        detected_symbol and symbol_chain_family(detected_symbol) != symbol_chain_family(current_symbol_upper)
+    )
+    effective_symbol = detected_symbol if symbol_auto_corrected else symbol
 
     # Accept a raw hash OR a pasted explorer link (any explorer) up front,
     # so the duplicate check and the on-chain lookup both key off the same
@@ -612,7 +630,91 @@ async def create_team(team_name: str = Body(...), contractor_names: list[str] = 
             )
 
         conn.commit()
+        return {"status": "success", "team_id": team_id}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.post("/api/teams/add-member")
+async def add_team_member(payload: dict = Body(...)):
+    team_id = payload.get("team_id")
+    contractor_name = payload.get("contractor_name")
+    if not team_id or not contractor_name:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "team_id and contractor_name are required."})
+
+    name_clean = str(contractor_name).strip().lower()
+    conn = None
+    try:
+        conn = get_db()
+        cursor = db_cursor(conn)
+
+        # Auto-create the contractor if they somehow don't exist yet — the
+        # UI only offers existing contractors in the dropdown, but this
+        # keeps the endpoint safe to call directly too.
+        cursor.execute("INSERT INTO contractors (name) VALUES (%s) ON CONFLICT (name) DO NOTHING", (name_clean,))
+        cursor.execute("SELECT id FROM contractors WHERE name = %s", (name_clean,))
+        contractor_row = cursor.fetchone()
+        if not contractor_row:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Could not resolve contractor."})
+
+        cursor.execute(
+            "INSERT INTO team_members (team_id, contractor_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+            (team_id, contractor_row["id"]),
+        )
+        conn.commit()
         return {"status": "success"}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.post("/api/teams/remove-member")
+async def remove_team_member(payload: dict = Body(...)):
+    team_id = payload.get("team_id")
+    contractor_name = payload.get("contractor_name")
+    if not team_id or not contractor_name:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "team_id and contractor_name are required."})
+
+    name_clean = str(contractor_name).strip().lower()
+    conn = None
+    try:
+        conn = get_db()
+        cursor = db_cursor(conn)
+
+        cursor.execute("SELECT id FROM contractors WHERE name = %s", (name_clean,))
+        contractor_row = cursor.fetchone()
+        if not contractor_row:
+            return {"status": "success", "removed": 0}
+
+        cursor.execute(
+            "DELETE FROM team_members WHERE team_id = %s AND contractor_id = %s",
+            (team_id, contractor_row["id"]),
+        )
+        removed = cursor.rowcount
+        conn.commit()
+        return {"status": "success", "removed": removed}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.post("/api/delete-team")
+async def delete_team(payload: dict = Body(...)):
+    team_id = payload.get("team_id")
+    if not team_id:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "team_id is required."})
+
+    conn = None
+    try:
+        conn = get_db()
+        cursor = db_cursor(conn)
+        # team_members rows cascade-delete via the FK's ON DELETE CASCADE —
+        # contractors themselves are untouched, only the team association.
+        cursor.execute("DELETE FROM teams WHERE id = %s", (team_id,))
+        deleted = cursor.rowcount
+        conn.commit()
+        return {"status": "success", "deleted": deleted}
     finally:
         if conn:
             conn.close()
