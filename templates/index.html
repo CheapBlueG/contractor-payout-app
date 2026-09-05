@@ -836,6 +836,23 @@ function app() {
             setTimeout(() => { this.toasts = this.toasts.filter(t => t.id !== id); }, 5000);
         },
 
+        // ---------- network helper ----------
+        async fetchWithTimeout(url, options = {}, timeoutMs = 45000) {
+            // Blockchain verification can involve several sequential
+            // outbound calls on the server; if the server (or a block
+            // explorer it depends on) ever hangs instead of failing fast,
+            // a plain fetch() with no timeout would leave the button stuck
+            // on "Verifying…" indefinitely with zero feedback. This bounds
+            // it to a clear failure instead of a silent, unbounded wait.
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+                return await fetch(url, { ...options, signal: controller.signal });
+            } finally {
+                clearTimeout(timer);
+            }
+        },
+
         // ---------- status helpers ----------
         isPaid(status) {
             // Centralized, null-safe — and an EXACT match, not a substring
@@ -1135,7 +1152,7 @@ function app() {
 
             this.crypto.busy = true;
             try {
-                const res = await fetch('/api/reconcile-crypto', {
+                const res = await this.fetchWithTimeout('/api/reconcile-crypto', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ ledger_ids: this.selectedIds, tx_id: this.crypto.txInput.trim(), symbol: this.crypto.symbol })
                 });
@@ -1180,7 +1197,11 @@ function app() {
                     this.notify(data.message || 'Verification failed.', 'error');
                 }
             } catch (e) {
-                this.notify('Network error connecting to API.', 'error');
+                if (e.name === 'AbortError') {
+                    this.notify('Verification timed out — the blockchain API may be unreachable right now. Try again in a moment.', 'error');
+                } else {
+                    this.notify('Network error connecting to API.', 'error');
+                }
             } finally {
                 this.crypto.busy = false;
             }
@@ -1189,7 +1210,7 @@ function app() {
         async submitOverride() {
             this.mismatchModal.busy = true;
             try {
-                const res = await fetch('/api/reconcile-crypto', {
+                const res = await this.fetchWithTimeout('/api/reconcile-crypto', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         ledger_ids: this.mismatchModal.ledgerIds,
@@ -1213,7 +1234,11 @@ function app() {
                     this.notify(data.message || 'Override failed.', 'error');
                 }
             } catch (e) {
-                this.notify('Network error connecting to API.', 'error');
+                if (e.name === 'AbortError') {
+                    this.notify('Override timed out — the blockchain API may be unreachable right now. Try again in a moment.', 'error');
+                } else {
+                    this.notify('Network error connecting to API.', 'error');
+                }
             } finally {
                 this.mismatchModal.busy = false;
             }
