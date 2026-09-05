@@ -167,7 +167,6 @@ tr.paid td .name{color:var(--text)}
       <select style="width:auto" x-model="selectedWeek" @change="loadWeek(selectedWeek)">
         <template x-for="w in weeks" :key="w"><option :value="w" x-text="w"></option></template>
       </select>
-      <button class="btn sm" x-show="selectedWeek" @click="applyCreditsToWeek()" title="Draw down any advance balances against this week's unpaid rows">Apply advance credits</button>
       <a class="btn sm" x-show="selectedWeek" :href="'/api/export-csv?week_date='+encodeURIComponent(selectedWeek)">Export CSV</a>
       <button class="btn sm danger" x-show="selectedWeek" @click="deleteCurrentWeek()">Delete week</button>
     </div>
@@ -288,7 +287,7 @@ tr.paid td .name{color:var(--text)}
 <div class="selbar" x-show="selectedIds.length" x-cloak>
   <div>
     <div class="sum"><span x-text="selectedIds.length"></span> selected · <b x-text="fmt(selectedTotal)"></b> due</div>
-    <div class="sub" x-text="selectedContractorCount===1 ? 'One contractor — overpayments can be banked as advance credit.' : selectedContractorCount+' contractors in this selection.'"></div>
+    <div class="sub" x-text="selectedContractorCount===1 ? (selectedBalance>0 ? 'Has '+fmt(selectedBalance)+' advance balance available.' : 'One contractor selected.') : selectedContractorCount+' contractors in this selection.'"></div>
   </div>
   <div style="display:flex;gap:8px">
     <button class="btn" @click="selectAll(false)">Clear</button>
@@ -307,6 +306,7 @@ tr.paid td .name{color:var(--text)}
     <div class="tabs">
       <button :class="{on:pay.tab==='crypto'}" @click="pay.tab='crypto'">Crypto</button>
       <button :class="{on:pay.tab==='manual'}" @click="pay.tab='manual'">Cash app / other</button>
+      <button :class="{on:pay.tab==='credit'}" @click="pay.tab='credit'">Advance credit</button>
     </div>
 
     <div x-show="pay.tab==='crypto'">
@@ -358,14 +358,51 @@ tr.paid td .name{color:var(--text)}
         <input type="text" x-model="manual.notes" placeholder="e.g. $cashtag, reference, who approved">
       </div>
       <div class="hint" x-show="manualDiff!==null">
-        <template x-if="manualDiff>0.009"><span>That's <b class="mono" x-text="fmt(manualDiff)"></b> more than due<span x-show="selectedContractorCount===1"> — the extra will be banked as advance credit</span>.</span></template>
+        <template x-if="manualDiff>0.009"><span>That's <b class="mono" x-text="fmt(manualDiff)"></b> more than due.</span></template>
         <template x-if="manualDiff<-0.009"><span>That's <b class="mono" x-text="fmt(-manualDiff)"></b> short — you'll be asked to confirm.</span></template>
         <template x-if="Math.abs(manualDiff)<=0.009"><span>Matches what's due.</span></template>
       </div>
-      <label class="check field" x-show="selectedContractorCount===1 && manualDiff>0.009"><input type="checkbox" x-model="manual.bankExcess"> Bank the extra as advance credit</label>
+      <label class="check field" x-show="selectedContractorCount===1 && manualDiff>0.009"><input type="checkbox" x-model="manual.bankExcess"> Keep the extra <b class="mono" x-text="fmt(manualDiff)"></b> on their advance balance</label>
       <div class="actions">
         <button class="btn primary" :disabled="manual.busy||!manual.amount" @click="markPaidManual()" x-text="manual.busy?'Saving…':'Record payment'"></button>
       </div>
+    </div>
+
+    <div x-show="pay.tab==='credit'">
+      <template x-if="selectedContractorCount!==1">
+        <p class="hint" style="font-size:13px;color:var(--muted)">Advance balance belongs to one person. Select rows for a single contractor to use this tab.</p>
+      </template>
+      <template x-if="selectedContractorCount===1">
+        <div>
+          <div class="stat3" style="grid-template-columns:1fr 1fr">
+            <div><div class="l">Advance balance</div><div class="v" :style="selectedBalance>0?'color:var(--amber)':''" x-text="fmt(selectedBalance)"></div></div>
+            <div><div class="l">Due on selected rows</div><div class="v" x-text="fmt(selectedTotal)"></div></div>
+          </div>
+
+          <div class="card" style="background:var(--ink);margin:0 0 12px">
+            <h2 style="font-size:13px">They sent extra</h2>
+            <div class="row2">
+              <input type="number" step="0.01" min="0" x-model="credit.addAmount" placeholder="Extra received (USD)">
+              <input type="text" x-model="credit.addNote" placeholder="Note, e.g. sent $100 extra via Venmo">
+            </div>
+            <div class="actions" style="margin-top:10px">
+              <button class="btn" :disabled="credit.busy||!credit.addAmount" @click="addCreditFromPay()">Add to balance</button>
+            </div>
+          </div>
+
+          <div class="card" style="background:var(--ink);margin:0">
+            <h2 style="font-size:13px">Deduct from their balance</h2>
+            <div class="field">
+              <label>Amount to deduct against the selected rows</label>
+              <input type="number" step="0.01" min="0" x-model="credit.applyAmount" :placeholder="fmt(Math.min(selectedBalance,selectedTotal))">
+              <div class="hint">Leave blank to use as much as covers the rows (up to the balance). Rows fully covered are marked settled from advance balance.</div>
+            </div>
+            <div class="actions" style="margin-top:6px">
+              <button class="btn primary" :disabled="credit.busy||selectedBalance<=0" @click="applyCreditToSelection()" x-text="credit.busy?'Saving…':'Deduct from balance'"></button>
+            </div>
+          </div>
+        </div>
+      </template>
     </div>
   </div>
 </div>
@@ -379,8 +416,8 @@ tr.paid td .name{color:var(--text)}
       <div><div class="l">Received</div><div class="v" x-text="fmt(mismatch.receivedUsd)"></div></div>
       <div><div class="l" x-text="mismatch.difference<0?'Short by':'Over by'"></div><div class="v" :style="mismatch.difference<0?'color:var(--red)':'color:var(--amber)'" x-text="fmt(Math.abs(mismatch.difference))"></div></div>
     </div>
-    <label class="check field" x-show="mismatch.difference>0 && mismatch.singleContractor"><input type="checkbox" x-model="mismatch.bankExcess"> Bank the extra <b x-text="fmt(mismatch.difference)"></b> as advance credit for future weeks</label>
-    <div class="hint" x-show="mismatch.difference>0 && !mismatch.singleContractor">Several contractors are in this selection, so the extra can't be assigned to one balance — it'll be noted instead.</div>
+    <label class="check field" x-show="mismatch.difference>0 && mismatch.singleContractor"><input type="checkbox" x-model="mismatch.bankExcess"> Keep the extra <b x-text="fmt(mismatch.difference)"></b> on their advance balance</label>
+    <div class="hint" x-show="mismatch.difference>0 && !mismatch.singleContractor">Several contractors are in this selection, so the extra can't go on one balance — it'll be noted instead.</div>
     <div class="field" style="margin-top:8px">
       <label>Note (saved on the rows)</label>
       <input type="text" x-model="mismatch.note" placeholder="e.g. network fee, partial payment approved by …">
@@ -516,13 +553,13 @@ tr.paid td .name{color:var(--text)}
         </div>
 
         <div class="card" style="margin:0 0 12px;background:var(--ink)">
-          <h2 style="font-size:13px">Record an advance payment</h2>
+          <h2 style="font-size:13px">They sent extra</h2>
           <div class="row2">
             <input type="number" step="0.01" min="0" x-model="history.advanceAmount" placeholder="Amount (USD)">
             <input type="text" x-model="history.advanceNote" placeholder="Note, e.g. paid ahead via Venmo">
             <button class="btn primary" style="flex:0 0 auto" :disabled="!history.advanceAmount" @click="addAdvance()">Add to balance</button>
           </div>
-          <div class="hint">Advance balance is drawn down against unpaid weeks automatically, oldest first, until it runs out.</div>
+          <div class="hint">Nothing is deducted on its own. To use the balance, select their unpaid rows and choose "Advance credit" under Record payment.</div>
         </div>
 
         <div class="tablewrap">
@@ -593,7 +630,8 @@ function app(){
     upload:{pickedDate:'',weekDate:'',overwrite:false,file:null,fileName:'',previewSrc:null,dragOver:false,busy:false},
     pay:{open:false,tab:'crypto'},
     crypto:{symbol:'BTC',txInput:'',busy:false},
-    manual:{method:'CASHAPP',amount:'',notes:'',busy:false,bankExcess:true},
+    manual:{method:'CASHAPP',amount:'',notes:'',busy:false,bankExcess:false},
+    credit:{addAmount:'',addNote:'',applyAmount:'',busy:false},
     estimate:{amount:null,price:null,priceSymbol:null,fetchedAt:0},
     mismatch:{open:false,busy:false,kind:'crypto',ledgerIds:[],txInput:'',symbol:'',method:'',amount:0,totalOwed:0,receivedUsd:0,difference:0,note:'',bankExcess:true,singleContractor:false},
     details:{open:false,item:null},
@@ -636,6 +674,7 @@ function app(){
     get selectedRows(){ return this.ledgers.filter(r=>this.selectedIds.includes(r.id)); },
     get selectedTotal(){ return this.selectedRows.reduce((s,r)=>s+Number(r.net_due_usd ?? r.amount_owed_usd),0); },
     get selectedContractorCount(){ return new Set(this.selectedRows.map(r=>r.contractor_id)).size; },
+    get selectedBalance(){ const r=this.selectedRows[0]; if(!r) return 0; const c=this.contractors.find(x=>x.id===r.contractor_id); return Number((c?c.credit_balance:r.credit_balance)||0); },
     get manualDiff(){ if(this.manual.amount===''||this.manual.amount===null) return null; return Number(this.manual.amount)-this.selectedTotal; },
 
     setSort(k){ if(this.sortKey===k) this.sortDir=this.sortDir==='asc'?'desc':'asc'; else{this.sortKey=k;this.sortDir='asc';} },
@@ -672,7 +711,7 @@ function app(){
       const fd=new FormData(); fd.append('file',this.upload.file); fd.append('week_date',this.upload.weekDate.trim()); fd.append('overwrite',this.upload.overwrite);
       this.upload.busy=true;
       try{ const res=await this.fetchWithTimeout('/api/upload',{method:'POST',body:fd},120000); const d=await res.json();
-        if(res.ok&&d.status==='success'){ this.notify(`Imported ${d.extracted_count} rows${d.credit_rows_touched?` — advance credit applied to ${d.credit_rows_touched}`:''}.`,'success'); if(!this.weeks.includes(d.week_date)) this.weeks.unshift(d.week_date); await this.loadWeek(d.week_date); this.resetUpload(); }
+        if(res.ok&&d.status==='success'){ this.notify(`Imported ${d.extracted_count} rows.`,'success'); if(!this.weeks.includes(d.week_date)) this.weeks.unshift(d.week_date); await this.loadWeek(d.week_date); this.resetUpload(); }
         else if(d.status==='approval_required'){ this.approval={open:true,weekDate:d.week_date,overwrite:d.overwrite,records:d.records,unknown:d.unknown_contractors,existing:d.existing_contractors,mappings:{}}; }
         else this.notify(d.message||"Couldn't read that image.",'error');
       }catch(e){ this.notify(e.name==='AbortError'?'Import timed out. Try again.':'Network error during import.','error'); }
@@ -700,7 +739,7 @@ function app(){
       try{ const res=await this.post('/api/reconcile-crypto',{ledger_ids:this.selectedIds,tx_id:this.crypto.txInput.trim(),symbol:this.crypto.symbol}); const d=await res.json();
         if(d.symbol_auto_corrected&&d.symbol_used){ this.crypto.symbol=d.symbol_used; this.notify(`That link is a ${d.symbol_used} transaction — checked it as ${d.symbol_used}.`,'info'); }
         if(res.ok&&d.status==='matched'){ this.notify(`Settled — ${this.fmt(d.received_usd)} received (${d.confirmations} confirmation${d.confirmations===1?'':'s'}), sent ${d.paid_at_est}.`,'success'); this.crypto.txInput=''; this.pay.open=false; await this.refreshLedgers(); }
-        else if(d.status==='mismatch'){ this.pay.open=false; this.mismatch={open:true,busy:false,kind:'crypto',ledgerIds:[...this.selectedIds],txInput:this.crypto.txInput.trim(),symbol:d.symbol_used||this.crypto.symbol,method:'',amount:0,totalOwed:d.total_owed,receivedUsd:d.received_usd,difference:d.difference,note:'',bankExcess:true,singleContractor:this.selectedContractorCount===1}; }
+        else if(d.status==='mismatch'){ this.pay.open=false; this.mismatch={open:true,busy:false,kind:'crypto',ledgerIds:[...this.selectedIds],txInput:this.crypto.txInput.trim(),symbol:d.symbol_used||this.crypto.symbol,method:'',amount:0,totalOwed:d.total_owed,receivedUsd:d.received_usd,difference:d.difference,note:'',bankExcess:false,singleContractor:this.selectedContractorCount===1}; }
         else this.notify(d.message||"Couldn't verify that transaction.",'error');
       }catch(e){ this.notify(e.name==='AbortError'?'Verification timed out — the blockchain API may be unreachable. Try again shortly.':'Network error.','error'); }
       finally{ this.crypto.busy=false; }
@@ -710,8 +749,8 @@ function app(){
       if(!this.selectedIds.length){ this.notify('Select at least one row first.','error'); return; }
       this.manual.busy=true;
       try{ const res=await this.post('/api/mark-paid-manual',{ledger_ids:this.selectedIds,method:this.manual.method,amount_paid:Number(this.manual.amount),notes:this.manual.notes,override:false,bank_excess:this.manual.bankExcess}); const d=await res.json();
-        if(res.ok&&d.status==='success'){ this.notify(`Recorded ${this.fmt(d.amount_paid)} via ${this.methodLabel(d.method)}${d.excess_credited?` — ${this.fmt(d.excess_credited)} banked as advance credit`:''}.`,'success'); this.manual.amount=''; this.manual.notes=''; this.pay.open=false; await this.refreshLedgers(); }
-        else if(d.status==='mismatch'){ this.pay.open=false; this.mismatch={open:true,busy:false,kind:'manual',ledgerIds:[...this.selectedIds],txInput:'',symbol:'',method:this.manual.method,amount:Number(this.manual.amount),totalOwed:d.total_owed,receivedUsd:d.received_usd,difference:d.difference,note:this.manual.notes,bankExcess:true,singleContractor:this.selectedContractorCount===1}; }
+        if(res.ok&&d.status==='success'){ this.notify(`Recorded ${this.fmt(d.amount_paid)} via ${this.methodLabel(d.method)}${d.excess_credited?` — ${this.fmt(d.excess_credited)} kept on advance balance`:''}.`,'success'); this.manual.amount=''; this.manual.notes=''; this.pay.open=false; await this.refreshLedgers(); }
+        else if(d.status==='mismatch'){ this.pay.open=false; this.mismatch={open:true,busy:false,kind:'manual',ledgerIds:[...this.selectedIds],txInput:'',symbol:'',method:this.manual.method,amount:Number(this.manual.amount),totalOwed:d.total_owed,receivedUsd:d.received_usd,difference:d.difference,note:this.manual.notes,bankExcess:this.manual.bankExcess,singleContractor:this.selectedContractorCount===1}; }
         else this.notify(d.message||"Couldn't record that payment.",'error');
       }catch(e){ this.notify('Network error.','error'); }
       finally{ this.manual.busy=false; }
@@ -728,23 +767,33 @@ function app(){
         }
         const d=await res.json();
         if(res.ok&&(d.status==='matched'||d.status==='success')){
-          const extra=d.excess_credited?` ${this.fmt(d.excess_credited)} banked as advance credit.`:'';
+          const extra=d.excess_credited?` ${this.fmt(d.excess_credited)} kept on advance balance.`:'';
           this.notify(`Marked settled.${extra}`,'success'); this.mismatch.open=false; this.crypto.txInput=''; this.manual.amount=''; await this.refreshLedgers();
         } else this.notify(d.message||"Couldn't save that.",'error');
       }catch(e){ this.notify(e.name==='AbortError'?'Timed out — try again shortly.':'Network error.','error'); }
       finally{ this.mismatch.busy=false; }
     },
 
-    async applyCreditsToWeek(){
-      try{ const res=await this.post('/api/credits/apply-week',{week_date:this.selectedWeek}); const d=await res.json();
-        if(res.ok){ this.notify(d.rows_touched?`Advance credit applied to ${d.rows_touched} row${d.rows_touched===1?'':'s'}.`:'No advance balances to apply this week.','success'); await this.refreshLedgers(); } else this.notify(d.message||"Couldn't apply credits.",'error');
-      }catch(e){ this.notify('Network error.','error'); }
-    },
     async addAdvance(){
       try{ const res=await this.post('/api/credits/add',{contractor_id:this.history.id,amount:Number(this.history.advanceAmount),note:this.history.advanceNote}); const d=await res.json();
-        if(res.ok&&d.status==='success'){ this.notify(`Balance is now ${this.fmt(d.credit_balance)}${d.rows_covered?` — covered ${d.rows_covered} unpaid row${d.rows_covered===1?'':'s'}`:''}.`,'success'); this.history.advanceAmount=''; this.history.advanceNote=''; await this.openHistory(this.history.id,this.history.name); await this.refreshLedgers(); }
+        if(res.ok&&d.status==='success'){ this.notify(`Advance balance is now ${this.fmt(d.credit_balance)}.`,'success'); this.history.advanceAmount=''; this.history.advanceNote=''; await this.openHistory(this.history.id,this.history.name); await this.refreshLedgers(); }
         else this.notify(d.message||"Couldn't add that.",'error');
       }catch(e){ this.notify('Network error.','error'); }
+    },
+    async addCreditFromPay(){
+      const r=this.selectedRows[0]; if(!r) return; this.credit.busy=true;
+      try{ const res=await this.post('/api/credits/add',{contractor_id:r.contractor_id,amount:Number(this.credit.addAmount),note:this.credit.addNote}); const d=await res.json();
+        if(res.ok&&d.status==='success'){ this.notify(`${r.contractor}'s advance balance is now ${this.fmt(d.credit_balance)}.`,'success'); this.credit.addAmount=''; this.credit.addNote=''; const keep=[...this.selectedIds]; await this.refreshLedgers(); this.selectedIds=keep; }
+        else this.notify(d.message||"Couldn't add that.",'error');
+      }catch(e){ this.notify('Network error.','error'); } finally{ this.credit.busy=false; }
+    },
+    async applyCreditToSelection(){
+      this.credit.busy=true;
+      try{ const body={ledger_ids:this.selectedIds}; if(this.credit.applyAmount!=='') body.amount=Number(this.credit.applyAmount);
+        const res=await this.post('/api/credits/apply',body); const d=await res.json();
+        if(res.ok&&d.status==='success'){ this.notify(`Deducted ${this.fmt(d.applied)} from advance balance${d.remaining_due>0?` — ${this.fmt(d.remaining_due)} still due`:' — selected rows settled'}. Balance left: ${this.fmt(d.credit_balance)}.`,'success'); this.credit.applyAmount=''; this.pay.open=false; await this.refreshLedgers(); }
+        else this.notify(d.message||"Couldn't deduct that.",'error');
+      }catch(e){ this.notify('Network error.','error'); } finally{ this.credit.busy=false; }
     },
 
     async deleteCurrentWeek(){
