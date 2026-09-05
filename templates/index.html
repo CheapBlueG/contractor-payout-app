@@ -221,7 +221,7 @@ tr.paid td .name{color:var(--text)}
         <button class="chip" @click="selectAll(true)">All unpaid</button>
         <button class="chip" @click="selectAll(false)">None</button>
         <template x-for="team in teams" :key="team.id">
-          <button class="chip" :class="{on:filters.team===team.name}" @click="toggleTeamFilter(team.name)" x-text="team.name"></button>
+          <button class="chip" :class="{on:filters.team===team.name}" @click="toggleTeamFilter(team.name)"><span x-text="team.name"></span><span x-show="Number(team.credit_balance)>0" class="mono" style="margin-left:6px;opacity:.85" x-text="'+'+fmt(team.credit_balance)"></span></button>
         </template>
       </div>
       <div class="filters">
@@ -287,7 +287,7 @@ tr.paid td .name{color:var(--text)}
 <div class="selbar" x-show="selectedIds.length" x-cloak>
   <div>
     <div class="sum"><span x-text="selectedIds.length"></span> selected · <b x-text="fmt(selectedTotal)"></b> due</div>
-    <div class="sub" x-text="selectedContractorCount===1 ? (selectedBalance>0 ? 'Has '+fmt(selectedBalance)+' advance balance available.' : 'One contractor selected.') : selectedContractorCount+' contractors in this selection.'"></div>
+    <div class="sub" x-text="creditSources.length ? creditSources.filter(s=>s.balance>0).map(s=>s.label+' has '+fmt(s.balance)).join(' · ') || (selectedContractorCount===1?'One contractor selected.':selectedContractorCount+' contractors in this selection.') : selectedContractorCount+' contractors in this selection.'"></div>
   </div>
   <div style="display:flex;gap:8px">
     <button class="btn" @click="selectAll(false)">Clear</button>
@@ -369,13 +369,19 @@ tr.paid td .name{color:var(--text)}
     </div>
 
     <div x-show="pay.tab==='credit'">
-      <template x-if="selectedContractorCount!==1">
-        <p class="hint" style="font-size:13px;color:var(--muted)">Advance balance belongs to one person. Select rows for a single contractor to use this tab.</p>
+      <template x-if="!creditSources.length">
+        <p style="font-size:13px;color:var(--muted);margin:0">No balance can cover this selection. Select rows for one contractor, or for people who are all on the same team.</p>
       </template>
-      <template x-if="selectedContractorCount===1">
+      <template x-if="creditSources.length">
         <div>
+          <div class="field">
+            <label>Whose balance</label>
+            <select x-model="credit.source">
+              <template x-for="s in creditSources" :key="s.key"><option :value="s.key" x-text="s.label+' — '+fmt(s.balance)+' available'"></option></template>
+            </select>
+          </div>
           <div class="stat3" style="grid-template-columns:1fr 1fr">
-            <div><div class="l">Advance balance</div><div class="v" :style="selectedBalance>0?'color:var(--amber)':''" x-text="fmt(selectedBalance)"></div></div>
+            <div><div class="l">Balance</div><div class="v" :style="activeSourceBalance>0?'color:var(--amber)':''" x-text="fmt(activeSourceBalance)"></div></div>
             <div><div class="l">Due on selected rows</div><div class="v" x-text="fmt(selectedTotal)"></div></div>
           </div>
 
@@ -386,19 +392,19 @@ tr.paid td .name{color:var(--text)}
               <input type="text" x-model="credit.addNote" placeholder="Note, e.g. sent $100 extra via Venmo">
             </div>
             <div class="actions" style="margin-top:10px">
-              <button class="btn" :disabled="credit.busy||!credit.addAmount" @click="addCreditFromPay()">Add to balance</button>
+              <button class="btn" :disabled="credit.busy||!credit.addAmount" @click="addCreditFromPay()" x-text="'Add to '+(activeSource?.label||'balance')"></button>
             </div>
           </div>
 
           <div class="card" style="background:var(--ink);margin:0">
-            <h2 style="font-size:13px">Deduct from their balance</h2>
+            <h2 style="font-size:13px">Deduct from this balance</h2>
             <div class="field">
               <label>Amount to deduct against the selected rows</label>
-              <input type="number" step="0.01" min="0" x-model="credit.applyAmount" :placeholder="fmt(Math.min(selectedBalance,selectedTotal))">
-              <div class="hint">Leave blank to use as much as covers the rows (up to the balance). Rows fully covered are marked settled from advance balance.</div>
+              <input type="number" step="0.01" min="0" x-model="credit.applyAmount" :placeholder="fmt(Math.min(activeSourceBalance,selectedTotal))">
+              <div class="hint">Leave blank to cover as much as the balance allows. Rows fully covered are marked settled from advance balance.</div>
             </div>
             <div class="actions" style="margin-top:6px">
-              <button class="btn primary" :disabled="credit.busy||selectedBalance<=0" @click="applyCreditToSelection()" x-text="credit.busy?'Saving…':'Deduct from balance'"></button>
+              <button class="btn primary" :disabled="credit.busy||activeSourceBalance<=0" @click="applyCreditToSelection()" x-text="credit.busy?'Saving…':'Deduct from balance'"></button>
             </div>
           </div>
         </div>
@@ -499,9 +505,15 @@ tr.paid td .name{color:var(--text)}
     <div style="max-height:62vh;overflow-y:auto">
       <template x-for="team in teams" :key="team.id">
         <div class="card" style="margin:0 0 10px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <strong x-text="team.name"></strong>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px;flex-wrap:wrap">
+            <div><strong x-text="team.name"></strong>
+              <span class="credit-pill" x-show="Number(team.credit_balance)>0" x-text="fmt(team.credit_balance)+' advance'"></span></div>
             <button class="btn sm danger" @click="deleteTeam(team)">Delete team</button>
+          </div>
+          <div class="row2" style="margin-bottom:10px">
+            <input type="number" step="0.01" min="0" x-model="team.pendingCredit" placeholder="Team sent extra (USD)">
+            <input type="text" x-model="team.pendingCreditNote" placeholder="Note">
+            <button class="btn" style="flex:0 0 auto" :disabled="!team.pendingCredit" @click="addTeamCredit(team)">Add to team balance</button>
           </div>
           <div style="margin-bottom:10px">
             <template x-for="m in team.members" :key="m"><span class="tag"><span x-text="m"></span><button @click="removeTeamMember(team,m)" title="Remove">✕</button></span></template>
@@ -621,7 +633,7 @@ const METHODS = {
 function app(){
   return {
     ledgers: safeParseSeed('ledgers-data',[]),
-    teams: safeParseSeed('teams-data',[]).map(t=>({...t,pendingAdd:''})),
+    teams: safeParseSeed('teams-data',[]).map(t=>({...t,pendingAdd:'',pendingCredit:'',pendingCreditNote:''})),
     contractors: safeParseSeed('contractors-data',[]),
     weeks: safeParseSeed('weeks-data',[]),
     selectedWeek: (document.getElementById('selected-week-data')?.textContent||'').trim(),
@@ -631,7 +643,7 @@ function app(){
     pay:{open:false,tab:'crypto'},
     crypto:{symbol:'BTC',txInput:'',busy:false},
     manual:{method:'CASHAPP',amount:'',notes:'',busy:false,bankExcess:false},
-    credit:{addAmount:'',addNote:'',applyAmount:'',busy:false},
+    credit:{source:'',addAmount:'',addNote:'',applyAmount:'',busy:false},
     estimate:{amount:null,price:null,priceSymbol:null,fetchedAt:0},
     mismatch:{open:false,busy:false,kind:'crypto',ledgerIds:[],txInput:'',symbol:'',method:'',amount:0,totalOwed:0,receivedUsd:0,difference:0,note:'',bankExcess:true,singleContractor:false},
     details:{open:false,item:null},
@@ -674,7 +686,17 @@ function app(){
     get selectedRows(){ return this.ledgers.filter(r=>this.selectedIds.includes(r.id)); },
     get selectedTotal(){ return this.selectedRows.reduce((s,r)=>s+Number(r.net_due_usd ?? r.amount_owed_usd),0); },
     get selectedContractorCount(){ return new Set(this.selectedRows.map(r=>r.contractor_id)).size; },
-    get selectedBalance(){ const r=this.selectedRows[0]; if(!r) return 0; const c=this.contractors.find(x=>x.id===r.contractor_id); return Number((c?c.credit_balance:r.credit_balance)||0); },
+    get creditSources(){
+      // Which balances may pay for the selected rows: the single contractor
+      // (if only one is selected), plus any team every selected person is on.
+      const rows=this.selectedRows; if(!rows.length) return [];
+      const out=[]; const ids=new Set(rows.map(r=>r.contractor_id)); const names=new Set(rows.map(r=>r.contractor.toLowerCase()));
+      if(ids.size===1){ const r=rows[0]; const c=this.contractors.find(x=>x.id===r.contractor_id); out.push({key:'c:'+r.contractor_id,kind:'contractor',id:r.contractor_id,label:r.contractor,balance:Number((c?c.credit_balance:r.credit_balance)||0)}); }
+      for(const t of this.teams){ const m=new Set((t.members||[]).map(s=>s.toLowerCase())); if([...names].every(n=>m.has(n))) out.push({key:'t:'+t.id,kind:'team',id:t.id,label:'Team '+t.name,balance:Number(t.credit_balance||0)}); }
+      return out;
+    },
+    get activeSource(){ const s=this.creditSources; if(!s.length) return null; return s.find(x=>x.key===this.credit.source)||s[0]; },
+    get activeSourceBalance(){ return this.activeSource?this.activeSource.balance:0; },
     get manualDiff(){ if(this.manual.amount===''||this.manual.amount===null) return null; return Number(this.manual.amount)-this.selectedTotal; },
 
     setSort(k){ if(this.sortKey===k) this.sortDir=this.sortDir==='asc'?'desc':'asc'; else{this.sortKey=k;this.sortDir='asc';} },
@@ -683,12 +705,12 @@ function app(){
     toggleTeamFilter(n){ this.filters.team=this.filters.team===n?'':n; },
     toggleSelect(id,on){ if(on){ if(!this.selectedIds.includes(id)) this.selectedIds.push(id);} else this.selectedIds=this.selectedIds.filter(x=>x!==id); },
     selectAll(on){ if(on){ const ids=this.filteredLedgers.filter(r=>!this.isPaid(r.status)).map(r=>r.id); this.selectedIds=Array.from(new Set([...this.selectedIds,...ids])); } else this.selectedIds=[]; },
-    openPay(tab){ this.pay.tab=tab; this.pay.open=true; this.manual.amount=''; this.refreshEstimate(); },
+    openPay(tab){ this.pay.tab=tab; this.pay.open=true; this.manual.amount=''; this.credit.source=this.creditSources[0]?.key||''; this.refreshEstimate(); },
     openDetails(item){ this.details={open:true,item}; },
 
     async loadWeek(week){
       try{ const res=await fetch(`/api/ledgers?week_date=${encodeURIComponent(week)}`); const d=await res.json();
-        if(d.status==='success'){ this.ledgers=d.ledgers; if(d.contractors) this.contractors=d.contractors; this.selectedWeek=d.week_date||week; this.selectedIds=[]; history.replaceState(null,'',`/?selected_week=${encodeURIComponent(this.selectedWeek)}`); }
+        if(d.status==='success'){ this.ledgers=d.ledgers; if(d.contractors) this.contractors=d.contractors; if(d.team_balances){ for(const t of this.teams){ if(d.team_balances[t.id]!=null) t.credit_balance=d.team_balances[t.id]; } } this.selectedWeek=d.week_date||week; this.selectedIds=[]; history.replaceState(null,'',`/?selected_week=${encodeURIComponent(this.selectedWeek)}`); }
       }catch(e){ this.notify("Couldn't load that week.",'error'); }
     },
     async refreshLedgers(){ await this.loadWeek(this.selectedWeek); },
@@ -780,20 +802,27 @@ function app(){
         else this.notify(d.message||"Couldn't add that.",'error');
       }catch(e){ this.notify('Network error.','error'); }
     },
+    sourceBody(){ const s=this.activeSource; return s ? (s.kind==='team'?{team_id:s.id}:{contractor_id:s.id}) : {}; },
     async addCreditFromPay(){
-      const r=this.selectedRows[0]; if(!r) return; this.credit.busy=true;
-      try{ const res=await this.post('/api/credits/add',{contractor_id:r.contractor_id,amount:Number(this.credit.addAmount),note:this.credit.addNote}); const d=await res.json();
-        if(res.ok&&d.status==='success'){ this.notify(`${r.contractor}'s advance balance is now ${this.fmt(d.credit_balance)}.`,'success'); this.credit.addAmount=''; this.credit.addNote=''; const keep=[...this.selectedIds]; await this.refreshLedgers(); this.selectedIds=keep; }
+      const s=this.activeSource; if(!s) return; this.credit.busy=true;
+      try{ const res=await this.post('/api/credits/add',{...this.sourceBody(),amount:Number(this.credit.addAmount),note:this.credit.addNote}); const d=await res.json();
+        if(res.ok&&d.status==='success'){ this.notify(`${s.label} advance balance is now ${this.fmt(d.credit_balance)}.`,'success'); this.credit.addAmount=''; this.credit.addNote=''; const keep=[...this.selectedIds], src=this.credit.source; await this.refreshLedgers(); this.selectedIds=keep; this.credit.source=src; }
         else this.notify(d.message||"Couldn't add that.",'error');
       }catch(e){ this.notify('Network error.','error'); } finally{ this.credit.busy=false; }
     },
     async applyCreditToSelection(){
       this.credit.busy=true;
-      try{ const body={ledger_ids:this.selectedIds}; if(this.credit.applyAmount!=='') body.amount=Number(this.credit.applyAmount);
+      try{ const body={ledger_ids:this.selectedIds,...this.sourceBody()}; if(this.credit.applyAmount!=='') body.amount=Number(this.credit.applyAmount);
         const res=await this.post('/api/credits/apply',body); const d=await res.json();
-        if(res.ok&&d.status==='success'){ this.notify(`Deducted ${this.fmt(d.applied)} from advance balance${d.remaining_due>0?` — ${this.fmt(d.remaining_due)} still due`:' — selected rows settled'}. Balance left: ${this.fmt(d.credit_balance)}.`,'success'); this.credit.applyAmount=''; this.pay.open=false; await this.refreshLedgers(); }
+        if(res.ok&&d.status==='success'){ this.notify(`Deducted ${this.fmt(d.applied)} from ${d.source_label}${d.remaining_due>0?` — ${this.fmt(d.remaining_due)} still due`:' — selected rows settled'}. Balance left: ${this.fmt(d.credit_balance)}.`,'success'); this.credit.applyAmount=''; this.pay.open=false; await this.refreshLedgers(); }
         else this.notify(d.message||"Couldn't deduct that.",'error');
       }catch(e){ this.notify('Network error.','error'); } finally{ this.credit.busy=false; }
+    },
+    async addTeamCredit(team){
+      try{ const res=await this.post('/api/credits/add',{team_id:team.id,amount:Number(team.pendingCredit),note:team.pendingCreditNote}); const d=await res.json();
+        if(res.ok&&d.status==='success'){ team.credit_balance=d.credit_balance; team.pendingCredit=''; team.pendingCreditNote=''; this.notify(`Team ${team.name} advance balance is now ${this.fmt(d.credit_balance)}.`,'success'); }
+        else this.notify(d.message||"Couldn't add that.",'error');
+      }catch(e){ this.notify('Network error.','error'); }
     },
 
     async deleteCurrentWeek(){
@@ -808,7 +837,7 @@ function app(){
     async submitCreateTeam(){
       const name=this.teamModal.name.trim(); if(!name){ this.notify('Give the team a name.','error'); return; } if(!this.teamModal.members.length){ this.notify('Pick at least one member.','error'); return; }
       try{ const res=await this.post('/api/teams',{team_name:name,contractor_names:this.teamModal.members}); const d=await res.json();
-        if(res.ok&&d.status==='success'){ const ex=this.teams.find(t=>t.id===d.team_id); if(ex) ex.members=Array.from(new Set([...ex.members,...this.teamModal.members])).sort(); else this.teams.push({id:d.team_id,name,members:[...this.teamModal.members].sort(),pendingAdd:''}); this.notify('Team saved.','success'); this.teamModal={open:false,name:'',members:[]}; }
+        if(res.ok&&d.status==='success'){ const ex=this.teams.find(t=>t.id===d.team_id); if(ex) ex.members=Array.from(new Set([...ex.members,...this.teamModal.members])).sort(); else this.teams.push({id:d.team_id,name,members:[...this.teamModal.members].sort(),credit_balance:0,pendingAdd:'',pendingCredit:'',pendingCreditNote:''}); this.notify('Team saved.','success'); this.teamModal={open:false,name:'',members:[]}; }
         else this.notify(d.message||"Couldn't save the team.",'error');
       }catch(e){ this.notify('Network error.','error'); }
     },
