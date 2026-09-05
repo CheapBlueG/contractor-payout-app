@@ -82,6 +82,11 @@ def init_db():
         cursor.execute("ALTER TABLE contractors ADD COLUMN IF NOT EXISTS credit_balance NUMERIC(12, 2) DEFAULT 0;")
         cursor.execute("UPDATE contractors SET credit_balance = 0 WHERE credit_balance IS NULL;")
 
+        # Teams can hold a shared advance balance too: extra sent by a team
+        # can be deducted against any member's rows.
+        cursor.execute("ALTER TABLE teams ADD COLUMN IF NOT EXISTS credit_balance NUMERIC(12, 2) DEFAULT 0;")
+        cursor.execute("UPDATE teams SET credit_balance = 0 WHERE credit_balance IS NULL;")
+
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS credit_transactions (
             id SERIAL PRIMARY KEY,
@@ -92,6 +97,9 @@ def init_db():
             created_at_est VARCHAR(100)
         );
         """)
+        # A transaction belongs to EITHER a contractor OR a team.
+        cursor.execute("ALTER TABLE credit_transactions ADD COLUMN IF NOT EXISTS team_id INTEGER REFERENCES teams(id) ON DELETE CASCADE;")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_credit_transactions_team ON credit_transactions (team_id);")
         cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_credit_transactions_contractor
             ON credit_transactions (contractor_id);
