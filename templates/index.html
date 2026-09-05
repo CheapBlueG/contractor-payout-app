@@ -837,7 +837,7 @@ function app() {
         },
 
         // ---------- network helper ----------
-        async fetchWithTimeout(url, options = {}, timeoutMs = 45000) {
+        async fetchWithTimeout(url, options = {}, timeoutMs = 60000) {
             // Blockchain verification can involve several sequential
             // outbound calls on the server; if the server (or a block
             // explorer it depends on) ever hangs instead of failing fast,
