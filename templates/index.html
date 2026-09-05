@@ -1,1433 +1,793 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Contractor Ledger & Crypto Reconciliation</title>
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.13.5/cdn.min.js"></script>
-    <style>
-        :root {
-            --bg-main: #0f172a;
-            --card-bg: #1a2332;
-            --card-bg-elevated: #212c40;
-            --border-color: #334155;
-            --text-main: #e2e8f0;
-            --text-muted: #94a3b8;
-            --primary: #3b82f6;
-            --primary-hover: #60a5fa;
-            --danger: #f87171;
-            --danger-hover: #fca5a5;
-            --success: #4ade80;
-            --warning: #fbbf24;
-            --input-bg: #101827;
-        }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Weekly Settlement Ledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.13.5/cdn.min.js"></script>
+<style>
+:root{
+  --ink:#0E131B; --panel:#151C27; --raised:#1B2432; --rule:#2A3547; --rule-soft:#222C3B;
+  --text:#E6EBF2; --muted:#8B98AB; --faint:#5F6C80;
+  --amber:#F2B544; --amber-dim:rgba(242,181,68,.14);
+  --green:#3DD68C; --green-dim:rgba(61,214,140,.14);
+  --red:#F26B6B; --red-dim:rgba(242,107,107,.14);
+  --blue:#5B9CFF;
+  --sans:'IBM Plex Sans',system-ui,sans-serif; --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--ink);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.45}
+[x-cloak]{display:none!important}
+button,input,select{font:inherit;color:inherit}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+a{color:var(--blue)}
 
-        * { box-sizing: border-box; }
+.wrap{max-width:1440px;margin:0 auto;padding:20px 24px 96px}
+@media(max-width:900px){.wrap{padding:12px 12px 120px}}
 
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background-color: var(--bg-main);
-            color: var(--text-main);
-            margin: 0;
-            padding: 24px;
-        }
+.topbar{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+.topbar h1{margin:0;font-size:20px;font-weight:600;letter-spacing:-.01em}
+.topbar .sub{color:var(--muted);font-size:13px;margin-top:2px}
+.week-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 
-        [x-cloak] { display: none !important; }
+/* Settlement bar — the one loud element */
+.settle{background:var(--panel);border:1px solid var(--rule);border-radius:12px;padding:18px 20px;margin-bottom:18px}
+.settle-row{display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap}
+.settle .big{font-family:var(--mono);font-size:28px;font-weight:500;letter-spacing:-.02em}
+.settle .lbl{color:var(--muted);font-size:13px}
+.settle .out .big{color:var(--amber)}
+.settle .in .big{color:var(--green)}
+.bar{height:10px;border-radius:6px;background:var(--amber-dim);margin:12px 0 8px;overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--green);border-radius:6px;transition:width .35s ease}
+.settle .meta{display:flex;gap:18px;color:var(--muted);font-size:12.5px;flex-wrap:wrap}
+.settle .meta b{color:var(--text);font-weight:500;font-family:var(--mono)}
 
-        .container { max-width: 1400px; margin: 0 auto; }
+.grid{display:grid;grid-template-columns:300px 1fr;gap:18px;align-items:start}
+@media(max-width:1000px){.grid{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--rule);border-radius:12px;padding:16px 18px}
+.card+.card{margin-top:14px}
+.card h2{margin:0 0 12px;font-size:14px;font-weight:600}
+.field{margin-bottom:12px}
+label{display:block;font-size:12.5px;color:var(--muted);margin-bottom:5px}
+input[type=text],input[type=date],input[type=number],select{
+  width:100%;padding:9px 11px;background:var(--ink);border:1px solid var(--rule);border-radius:8px;color:var(--text);color-scheme:dark}
+input:focus,select:focus,button:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+.hint{font-size:12px;color:var(--faint);margin-top:5px;line-height:1.4}
+.check{display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text);cursor:pointer}
+.check input{cursor:pointer}
 
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 12px;
-            margin-bottom: 24px;
-            background: var(--card-bg);
-            padding: 20px 24px;
-            border-radius: 10px;
-            border: 1px solid var(--border-color);
-        }
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:9px 14px;border-radius:8px;border:1px solid var(--rule);
+  font-weight:500;font-size:13px;cursor:pointer;background:var(--raised);color:var(--text);white-space:nowrap;text-decoration:none}
+.btn:hover{background:#22304a}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.primary{background:var(--amber);color:#1a1200;border-color:transparent}
+.btn.primary:hover{background:#f7c25e}
+.btn.danger{color:var(--red);border-color:rgba(242,107,107,.35)}
+.btn.danger:hover{background:var(--red-dim)}
+.btn.sm{padding:6px 10px;font-size:12.5px}
+.btn.block{width:100%}
+.linkish{background:none;border:none;padding:0;color:var(--blue);cursor:pointer;text-decoration:underline;font-size:inherit}
 
-        .header h1 { margin: 0; font-size: 22px; font-weight: 700; }
+.drop{border:1px dashed var(--rule);border-radius:10px;padding:16px;text-align:center;color:var(--muted);cursor:pointer;font-size:13px}
+.drop.over{border-color:var(--amber);background:var(--amber-dim);color:var(--text)}
+.drop img{max-width:100%;max-height:130px;border-radius:6px;margin-bottom:8px}
 
-        .week-selector { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.filters{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.filters input[type=text]{width:220px}
+.filters select{width:auto}
+.chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.chip{background:var(--raised);border:1px solid var(--rule);color:var(--text);padding:5px 11px;border-radius:999px;font-size:12.5px;cursor:pointer}
+.chip:hover{background:#22304a}
+.chip.on{background:var(--amber);color:#1a1200;border-color:var(--amber)}
+.chips .lead{color:var(--muted);font-size:12.5px;margin-right:2px}
 
-        .grid {
-            display: grid;
-            grid-template-columns: minmax(280px, 360px) 1fr;
-            gap: 24px;
-        }
+.tablewrap{overflow-x:auto;border:1px solid var(--rule);border-radius:12px;background:var(--panel)}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th,td{padding:11px 14px;border-bottom:1px solid var(--rule-soft);text-align:left;white-space:nowrap;vertical-align:middle}
+th{font-size:12.5px;font-weight:500;color:var(--muted);background:var(--raised);position:sticky;top:0;cursor:pointer;user-select:none}
+th.nosort{cursor:default}
+th .arr{opacity:.7;margin-left:4px;font-size:10px}
+tbody tr:hover{background:#18212e}
+tbody tr:last-child td{border-bottom:none}
+tr.paid td{color:var(--muted)}
+tr.paid td .name{color:var(--text)}
+.name{background:none;border:none;padding:0;font-weight:500;color:var(--text);cursor:pointer;font-size:inherit}
+.name:hover{text-decoration:underline}
+.amt{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.amt .was{color:var(--faint);text-decoration:line-through;margin-right:6px;font-size:12px}
+.amt .net{color:var(--amber)}
+.status{display:inline-block;padding:3px 9px;border-radius:999px;font-size:11.5px;font-weight:500}
+.status.due{background:var(--amber-dim);color:var(--amber)}
+.status.paid{background:var(--green-dim);color:var(--green)}
+.credit-pill{display:inline-block;margin-left:8px;padding:2px 7px;border-radius:999px;font-size:11px;background:var(--amber-dim);color:var(--amber);font-family:var(--mono)}
+.notes-cell{max-width:280px;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-size:12.5px}
+.empty{padding:40px;text-align:center;color:var(--muted)}
 
-        @media (max-width: 900px) {
-            body { padding: 12px; }
-            .grid { grid-template-columns: 1fr; }
-            .header { padding: 16px; }
-        }
+.method{display:inline-flex;align-items:center;gap:6px;padding:4px 9px 4px 6px;border-radius:999px;font-size:12px;font-weight:500;border:1px solid transparent;cursor:pointer;background:var(--raised)}
+.method:hover{filter:brightness(1.15)}
+.method .g{width:18px;height:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;font-family:var(--mono)}
+.m-BTC .g{background:#F7931A;color:#1a1200}.m-BTC{color:#FFB35C}
+.m-LTC .g{background:#7F9BC4;color:#0e131b}.m-LTC{color:#B7C7E0}
+.m-ETH .g{background:#8A7CF2;color:#fff}.m-ETH{color:#B4ABFF}
+.m-USDT .g,.m-USDC .g,.m-DAI .g{background:#2EBAA8;color:#04211d}.m-USDT,.m-USDC,.m-DAI{color:#7FE0D3}
+.m-CASHAPP .g{background:#00D64F;color:#022a10}.m-CASHAPP{color:#6FEB9C}
+.m-VENMO .g{background:#3D95CE;color:#fff}.m-VENMO{color:#8CC4EE}
+.m-ZELLE .g{background:#6D1ED4;color:#fff}.m-ZELLE{color:#B48BF5}
+.m-CASH .g,.m-OTHER .g{background:#5F6C80;color:#fff}.m-CASH,.m-OTHER{color:#B8C2D1}
+.m-CREDIT .g{background:var(--amber);color:#1a1200}.m-CREDIT{color:var(--amber)}
 
-        .card {
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 10px;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
+.selbar{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;width:min(960px,calc(100% - 24px));
+  background:#0A0F17;border:1px solid var(--rule);border-radius:14px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  box-shadow:0 18px 40px rgba(0,0,0,.45);z-index:40}
+.selbar .sum{font-family:var(--mono);font-size:15px}
+.selbar .sum b{color:var(--amber);font-weight:500}
+.selbar .sub{color:var(--muted);font-size:12.5px}
 
-        .card h2, .card h3 {
-            margin-top: 0;
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 14px;
-            color: var(--text-main);
-        }
+.overlay{position:fixed;inset:0;background:rgba(3,6,12,.72);display:flex;align-items:center;justify-content:center;padding:16px;z-index:100}
+.modal{background:var(--panel);border:1px solid var(--rule);border-radius:14px;padding:22px;width:100%;max-width:560px;max-height:92vh;overflow-y:auto}
+.modal.wide{max-width:720px}
+.mhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.mhead h3{margin:0;font-size:16px;font-weight:600}
+.x{background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:4px 8px;border-radius:6px}
+.x:hover{background:var(--raised);color:var(--text)}
+.tabs{display:flex;gap:4px;background:var(--ink);padding:4px;border-radius:10px;margin-bottom:14px}
+.tabs button{flex:1;padding:8px;border:none;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer;font-weight:500}
+.tabs button.on{background:var(--raised);color:var(--text)}
+.kv{display:grid;grid-template-columns:130px 1fr;gap:8px 14px;font-size:13.5px;margin:12px 0}
+.kv dt{color:var(--muted)}.kv dd{margin:0}
+.kv .hash{font-family:var(--mono);font-size:12.5px;word-break:break-all}
+.row2{display:flex;gap:10px}
+.row2>*{flex:1}
+.stat3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0}
+.stat3>div{background:var(--ink);border:1px solid var(--rule);border-radius:10px;padding:10px 12px}
+.stat3 .l{color:var(--muted);font-size:12px}.stat3 .v{font-family:var(--mono);font-size:17px;margin-top:2px}
+.tag{display:inline-flex;align-items:center;gap:6px;background:var(--raised);border:1px solid var(--rule);padding:4px 8px;border-radius:6px;font-size:12.5px;margin:2px}
+.tag button{background:none;border:none;color:var(--red);cursor:pointer;font-weight:600;padding:0}
+.actions{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}
+.actions .btn{flex:1}
 
-        .form-group { margin-bottom: 14px; }
-
-        label {
-            display: block;
-            font-size: 13px;
-            font-weight: 600;
-            margin-bottom: 6px;
-            color: var(--text-muted);
-        }
-
-        input[type="text"], input[type="date"], input[type="file"], select, textarea {
-            width: 100%;
-            padding: 9px 12px;
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            font-size: 14px;
-            box-sizing: border-box;
-            background: var(--input-bg);
-            color: var(--text-main);
-            color-scheme: dark;
-        }
-
-        input[type="checkbox"] { cursor: pointer; }
-
-        .checkbox-label {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 13px;
-            font-weight: normal;
-            color: var(--text-main);
-            cursor: pointer;
-        }
-
-        .hint { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
-
-        .btn {
-            background: var(--primary);
-            color: #fff;
-            border: none;
-            padding: 10px 16px;
-            border-radius: 6px;
-            font-weight: 600;
-            font-size: 13px;
-            cursor: pointer;
-            width: 100%;
-            display: inline-flex;
-            justify-content: center;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .btn:hover { background: var(--primary-hover); }
-        .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-
-        .btn-danger { background: var(--danger); }
-        .btn-danger:hover { background: var(--danger-hover); }
-
-        .btn-secondary {
-            background: var(--card-bg-elevated);
-            color: var(--text-main);
-            border: 1px solid var(--border-color);
-        }
-        .btn-secondary:hover { background: #2a3750; }
-
-        .btn-sm { padding: 6px 10px; font-size: 12px; width: auto; }
-        .btn-link {
-            background: none; border: none; padding: 0; width: auto;
-            color: var(--primary); text-decoration: underline; cursor: pointer; font-size: inherit;
-        }
-
-        .table-container { overflow-x: auto; }
-
-        table { width: 100%; border-collapse: collapse; font-size: 14px; text-align: left; }
-
-        th, td { padding: 12px 14px; border-bottom: 1px solid var(--border-color); white-space: nowrap; }
-
-        th {
-            background: var(--card-bg-elevated);
-            color: var(--text-muted);
-            font-weight: 600;
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            cursor: pointer;
-            user-select: none;
-        }
-        th.sortable:hover { color: var(--text-main); }
-        th .arrow { font-size: 10px; margin-left: 3px; opacity: 0.6; }
-
-        tr:hover { background: var(--card-bg-elevated); }
-
-        .badge {
-            display: inline-block;
-            padding: 3px 8px;
-            border-radius: 4px;
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-        }
-
-        .badge-unpaid { background: #4c1d1d; color: #fca5a5; }
-        .badge-paid { background: #14532d; color: #86efac; }
-        .badge-manual { background: #451a03; color: #fcd34d; }
-        .badge-confirm { background: #312e81; color: #c7d2fe; }
-
-        .toolbar {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            align-items: center;
-            margin-bottom: 14px;
-        }
-
-        .toolbar input[type="text"] { width: 200px; }
-        .toolbar select { width: auto; }
-
-        .teams-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
-
-        .team-chip {
-            background: var(--card-bg-elevated);
-            border: 1px solid var(--border-color);
-            padding: 5px 12px;
-            border-radius: 16px;
-            font-size: 12px;
-            font-weight: 600;
-            cursor: pointer;
-            color: var(--text-main);
-        }
-        .team-chip:hover { background: #2a3750; }
-        .team-chip.active { background: var(--primary); color: #fff; border-color: var(--primary); }
-
-        .selection-bar {
-            position: sticky;
-            bottom: 0;
-            background: #060b16;
-            color: #fff;
-            border: 1px solid var(--border-color);
-            border-radius: 10px;
-            padding: 14px 18px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 12px;
-            margin-top: 16px;
-        }
-        .selection-bar strong { font-size: 15px; }
-        .selection-bar .muted { color: #94a3b8; font-size: 12px; }
-        .selection-bar strong { color: #fff; }
-
-        .modal-overlay {
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(2, 6, 23, 0.7);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-            padding: 16px;
-        }
-
-        .modal {
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 10px;
-            padding: 24px;
-            width: 100%;
-            max-width: 550px;
-            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.4);
-            max-height: 90vh;
-            overflow-y: auto;
-            color: var(--text-main);
-        }
-
-        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-        .modal-header h3 { margin: 0; }
-
-        .mapping-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-
-        .flex-actions { display: flex; gap: 10px; margin-top: 14px; }
-
-        .contractor-tag {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            background: var(--card-bg-elevated);
-            border: 1px solid var(--border-color);
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            margin: 2px;
-            color: var(--text-main);
-        }
-        .contractor-tag button {
-            background: none; border: none; padding: 0; cursor: pointer;
-            color: var(--danger); font-weight: bold; font-size: 12px;
-        }
-        .contractor-tag .link { cursor: pointer; color: var(--primary); text-decoration: underline; }
-
-        .dropzone {
-            border: 2px dashed var(--border-color);
-            border-radius: 8px;
-            padding: 18px;
-            text-align: center;
-            font-size: 13px;
-            color: var(--text-muted);
-            cursor: pointer;
-            transition: border-color 0.15s, background 0.15s;
-        }
-        .dropzone.dragover { border-color: var(--primary); background: #16233d; color: var(--primary-hover); }
-        .dropzone img { max-width: 100%; max-height: 140px; border-radius: 6px; margin-bottom: 8px; }
-
-        .toast-stack {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            z-index: 2000;
-            max-width: 360px;
-        }
-        .toast {
-            padding: 12px 16px;
-            border-radius: 8px;
-            font-size: 13px;
-            box-shadow: 0 10px 15px -3px rgba(0,0,0,0.15);
-            color: #fff;
-        }
-        .toast-success { background: var(--success); }
-        .toast-error { background: var(--danger); }
-        .toast-info { background: #334155; }
-        .toast { border: 1px solid rgba(255,255,255,0.08); }
-
-        .summary-strip {
-            display: flex;
-            gap: 20px;
-            flex-wrap: wrap;
-            margin-bottom: 16px;
-            font-size: 13px;
-        }
-        .summary-strip .stat { color: var(--text-muted); }
-        .summary-strip .stat strong { color: var(--text-main); font-size: 15px; display: block; }
-
-        .estimate-note { font-size: 11px; color: var(--text-muted); margin-top: 8px; line-height: 1.4; }
-
-        a.explorer-link { color: var(--primary); text-decoration: none; }
-        a.explorer-link:hover { text-decoration: underline; }
-    </style>
+.toasts{position:fixed;top:16px;right:16px;display:flex;flex-direction:column;gap:8px;z-index:200;max-width:380px}
+.toast{padding:11px 14px;border-radius:10px;font-size:13px;border:1px solid var(--rule);background:var(--raised);color:var(--text);box-shadow:0 10px 24px rgba(0,0,0,.35)}
+.toast.success{border-color:rgba(61,214,140,.4)}.toast.error{border-color:rgba(242,107,107,.5)}
+.toast.success::before{content:"● ";color:var(--green)}.toast.error::before{content:"● ";color:var(--red)}.toast.info::before{content:"● ";color:var(--blue)}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
 </head>
 <body x-data="app()" x-init="init()">
+<div class="wrap">
 
-<div class="container">
-    <!-- Top Header -->
-    <div class="header">
-        <div>
-            <h1>Weekly Contractor Ledger</h1>
-            <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">
-                Reconciliation & Payment Verification Engine
-            </div>
-        </div>
+  <div class="topbar">
+    <div>
+      <h1>Weekly settlement ledger</h1>
+      <div class="sub">Who still owes this week, what came in, and how.</div>
+    </div>
+    <div class="week-controls">
+      <select style="width:auto" x-model="selectedWeek" @change="loadWeek(selectedWeek)">
+        <template x-for="w in weeks" :key="w"><option :value="w" x-text="w"></option></template>
+      </select>
+      <button class="btn sm" x-show="selectedWeek" @click="applyCreditsToWeek()" title="Draw down any advance balances against this week's unpaid rows">Apply advance credits</button>
+      <a class="btn sm" x-show="selectedWeek" :href="'/api/export-csv?week_date='+encodeURIComponent(selectedWeek)">Export CSV</a>
+      <button class="btn sm danger" x-show="selectedWeek" @click="deleteCurrentWeek()">Delete week</button>
+    </div>
+  </div>
 
-        <div class="week-selector">
-            <label for="weekSelect" style="margin: 0;">Week Range:</label>
-            <select id="weekSelect" style="width: auto;" x-model="selectedWeek" @change="loadWeek(selectedWeek)">
-                <template x-for="w in weeks" :key="w">
-                    <option :value="w" x-text="w"></option>
-                </template>
-            </select>
-            <a class="btn btn-secondary btn-sm" :href="'/api/export-csv?week_date=' + encodeURIComponent(selectedWeek)" x-show="selectedWeek">Export CSV</a>
-            <button class="btn btn-danger btn-sm" @click="deleteCurrentWeek()" x-show="selectedWeek">Delete Week</button>
+  <div class="settle" x-show="ledgers.length" x-cloak>
+    <div class="settle-row">
+      <div class="in"><div class="lbl">Collected</div><div class="big" x-text="fmt(totalPaid)"></div></div>
+      <div class="out" style="text-align:right"><div class="lbl">Still outstanding</div><div class="big" x-text="fmt(totalOutstanding)"></div></div>
+    </div>
+    <div class="bar"><i :style="'width:'+ pctPaid +'%'"></i></div>
+    <div class="meta">
+      <span>Week total <b x-text="fmt(totalWeek)"></b></span>
+      <span><b x-text="paidCount"></b> of <b x-text="ledgers.length"></b> settled</span>
+      <span x-show="totalCreditApplied>0">Covered by advance credit <b x-text="fmt(totalCreditApplied)"></b></span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div>
+      <div class="card">
+        <h2>Import a week</h2>
+        <div class="field">
+          <label>Week (Monday–Sunday)</label>
+          <input type="date" x-model="upload.pickedDate" @change="onPickWeek()" @mouseenter="openCalendar($event)">
+          <div class="hint" x-show="upload.weekDate">Saved as <strong x-text="upload.weekDate" style="color:var(--text)"></strong></div>
+          <div class="hint" x-show="!upload.weekDate">Pick any day and it snaps to that Monday–Sunday week.</div>
         </div>
+        <div class="field">
+          <label>Ledger screenshot</label>
+          <div class="drop" :class="{over:upload.dragOver}" @dragover.prevent="upload.dragOver=true" @dragleave.prevent="upload.dragOver=false" @drop.prevent="handleDrop($event)" @click="$refs.fileInput.click()">
+            <template x-if="upload.previewSrc"><img :src="upload.previewSrc" alt=""></template>
+            <div x-text="upload.fileName || 'Drop an image here or click to choose'"></div>
+            <input type="file" x-ref="fileInput" accept="image/*" style="display:none" @change="handleFileSelect($event)">
+          </div>
+        </div>
+        <label class="check field"><input type="checkbox" x-model="upload.overwrite"> Replace existing week</label>
+        <button class="btn primary block" :disabled="upload.busy||!upload.file||!upload.weekDate" @click="submitUpload()" x-text="upload.busy?'Reading image…':'Import week'"></button>
+      </div>
+
+      <div class="card">
+        <h2>Teams &amp; contractors</h2>
+        <button class="btn block" @click="teamModal.open=true">Create a team</button>
+        <button class="btn block" style="margin-top:8px" @click="teamsModal.open=true">Edit teams</button>
+        <button class="btn block" style="margin-top:8px" @click="contractorModal.open=true">Contractors &amp; advance balances</button>
+      </div>
     </div>
 
-    <div class="grid">
-        <!-- Sidebar Controls -->
-        <div>
-            <!-- Image Upload Card -->
-            <div class="card">
-                <h2>Upload Ledger Image</h2>
-                <div class="form-group">
-                    <label for="uploadWeekPicker">Week (Monday–Sunday)</label>
-                    <input type="date" id="uploadWeekPicker" x-model="upload.pickedDate"
-                           @change="onPickWeek()"
-                           @mouseenter="openCalendar($event)">
-                    <div class="hint" x-show="upload.weekDate">
-                        This will be logged as <strong x-text="upload.weekDate"></strong>
-                    </div>
-                    <div class="hint" x-show="!upload.weekDate">
-                        Pick any day — hover or click to open the calendar. We snap it to that
-                        Monday–Sunday week automatically, so every week is a fixed 7-day range.
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label>Ledger Image File</label>
-                    <div class="dropzone"
-                         :class="{dragover: upload.dragOver}"
-                         @dragover.prevent="upload.dragOver = true"
-                         @dragleave.prevent="upload.dragOver = false"
-                         @drop.prevent="handleDrop($event)"
-                         @click="$refs.fileInput.click()">
-                        <template x-if="upload.previewSrc">
-                            <img :src="upload.previewSrc" alt="preview">
-                        </template>
-                        <div x-text="upload.fileName || 'Drag & drop an image here, or click to browse'"></div>
-                        <input type="file" x-ref="fileInput" accept="image/*" style="display:none" @change="handleFileSelect($event)">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label class="checkbox-label">
-                        <input type="checkbox" x-model="upload.overwrite">
-                        Overwrite if week already exists
-                    </label>
-                </div>
-                <button class="btn" :disabled="upload.busy || !upload.file || !upload.weekDate" @click="submitUpload()">
-                    <span x-text="upload.busy ? 'Parsing Image via GPT-4o…' : 'Upload & Parse Image'"></span>
-                </button>
-            </div>
-
-            <!-- Crypto Payment Reconciliation -->
-            <div class="card">
-                <h2>Crypto Reconciliation</h2>
-                <div class="form-group">
-                    <label for="cryptoSymbol">Cryptocurrency</label>
-                    <select id="cryptoSymbol" x-model="crypto.symbol" @change="debouncedRefreshEstimate()">
-                        <option value="LTC">Litecoin (LTC)</option>
-                        <option value="BTC">Bitcoin (BTC)</option>
-                        <option value="ETH">Ethereum (ETH)</option>
-                        <optgroup label="Ethereum tokens">
-                            <option value="USDT">Tether (USDT)</option>
-                            <option value="USDC">USD Coin (USDC)</option>
-                            <option value="DAI">Dai (DAI)</option>
-                        </optgroup>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="txId">Transaction Hash or Explorer Link</label>
-                    <input type="text" id="txId" x-model="crypto.txInput"
-                           placeholder="Paste a hash, or a link like etherscan.io/tx/0x...">
-                    <div class="hint">Paste a link from any explorer — we detect the coin and pull out the hash automatically. A bare hash with no link still needs the dropdown above set correctly.</div>
-                </div>
-                <button class="btn" :disabled="crypto.busy || !selectedIds.length || !crypto.txInput" @click="reconcileCrypto()">
-                    <span x-text="crypto.busy ? 'Verifying Tx…' : 'Verify Blockchain Tx'"></span>
-                </button>
-                <div class="estimate-note" x-show="selectedIds.length && estimate.amount">
-                    ≈ <span x-text="estimate.amount"></span> <span x-text="crypto.symbol"></span> at today's rate for
-                    $<span x-text="selectedTotal.toFixed(2)"></span> owed. This is just a live estimate —
-                    the actual payment is always priced at the moment it was sent, so a price drop after
-                    sending never counts against the sender.
-                </div>
-            </div>
-
-            <!-- Manual Payment Card -->
-            <div class="card">
-                <h2>Manual Payment</h2>
-                <div class="form-group">
-                    <label for="manualNotes">Payment Notes (Optional)</label>
-                    <input type="text" id="manualNotes" x-model="manual.notes" placeholder="e.g. Cash / Bank Wire">
-                </div>
-                <button class="btn btn-secondary" :disabled="manual.busy || !selectedIds.length" @click="markPaidManual()">
-                    <span x-text="manual.busy ? 'Updating…' : 'Mark Selected as Manually Paid'"></span>
-                </button>
-            </div>
-
-            <!-- Team & Contractor Management -->
-            <div class="card">
-                <h2>Team Management</h2>
-                <button class="btn btn-secondary" @click="teamModal.open = true">+ Create New Team</button>
-                <div style="margin-top: 10px;">
-                    <button class="btn btn-secondary" @click="teamsModal.open = true">Edit Teams (Add/Remove Members)</button>
-                </div>
-                <div style="margin-top: 14px;">
-                    <button class="btn btn-secondary btn-sm" @click="contractorModal.open = true">Manage Contractors</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Main Content Table Area -->
-        <div class="card">
-            <div class="summary-strip">
-                <div class="stat">Total this week<strong x-text="'$' + totalWeek.toFixed(2)"></strong></div>
-                <div class="stat">Paid<strong x-text="'$' + totalPaid.toFixed(2)"></strong></div>
-                <div class="stat">Unpaid<strong x-text="'$' + totalUnpaid.toFixed(2)"></strong></div>
-                <div class="stat">Rows<strong x-text="ledgers.length"></strong></div>
-            </div>
-
-            <div class="teams-bar">
-                <span style="font-size: 12px; font-weight: 600; color: var(--text-muted);">Quick Select:</span>
-                <button class="team-chip" @click="selectAll(true)">Select All</button>
-                <button class="team-chip" @click="selectAll(false)">Deselect All</button>
-                <template x-for="team in teams" :key="team.id">
-                    <button class="team-chip"
-                            :class="{active: filters.team === team.name}"
-                            @click="toggleTeamFilter(team.name)"
-                            x-text="team.name"></button>
-                </template>
-            </div>
-
-            <div class="toolbar">
-                <input type="text" x-model="filters.search" placeholder="Search contractor…">
-                <select x-model="filters.status">
-                    <option value="all">All statuses</option>
-                    <option value="unpaid">Unpaid only</option>
-                    <option value="paid">Paid / Manually paid</option>
-                </select>
-                <button class="btn-link" x-show="filters.team || filters.search || filters.status !== 'all'" @click="clearFilters()">Clear filters</button>
-            </div>
-
-            <div class="table-container">
-                <table>
-                    <thead>
-                        <tr>
-                            <th style="width: 36px;">
-                                <input type="checkbox" @click="selectAll($event.target.checked)"
-                                       :checked="filteredLedgers.length && filteredLedgers.every(r => selectedIds.includes(r.id))">
-                            </th>
-                            <th @click="setSort('id')" class="sortable">ID <span class="arrow" x-text="sortArrow('id')"></span></th>
-                            <th @click="setSort('contractor')" class="sortable">Contractor <span class="arrow" x-text="sortArrow('contractor')"></span></th>
-                            <th @click="setSort('amount_owed_usd')" class="sortable">Amount (USD) <span class="arrow" x-text="sortArrow('amount_owed_usd')"></span></th>
-                            <th @click="setSort('status')" class="sortable">Status <span class="arrow" x-text="sortArrow('status')"></span></th>
-                            <th @click="setSort('paid_at_est')" class="sortable">Paid At (EST) <span class="arrow" x-text="sortArrow('paid_at_est')"></span></th>
-                            <th>Tx Hash / Symbol</th>
-                            <th>Notes</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <template x-if="!filteredLedgers.length">
-                            <tr>
-                                <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 30px;">
-                                    No ledger entries match the current filters.
-                                </td>
-                            </tr>
-                        </template>
-                        <template x-for="item in filteredLedgers" :key="item.id">
-                            <tr>
-                                <td>
-                                    <input type="checkbox" :value="item.id" :checked="selectedIds.includes(item.id)"
-                                           @change="toggleSelect(item.id, $event.target.checked)"
-                                           x-show="!isPaid(item.status)">
-                                </td>
-                                <td x-text="item.id"></td>
-                                <td>
-                                    <button class="btn-link" style="font-weight:700; color: var(--text-main); text-decoration:none;"
-                                            @click="openHistory(item.contractor_id, item.contractor)" x-text="item.contractor"></button>
-                                </td>
-                                <td x-text="'$' + Number(item.amount_owed_usd).toFixed(2)"></td>
-                                <td>
-                                    <span class="badge badge-paid" x-show="item.status === 'PAID'">PAID</span>
-                                    <span class="badge badge-manual" x-show="item.status === 'MANUALLY_PAID'">MANUAL</span>
-                                    <span class="badge badge-unpaid" x-show="!isPaid(item.status)">UNPAID</span>
-                                </td>
-                                <td style="font-size: 12px; color: var(--text-muted);" x-text="item.paid_at_est || '-'"></td>
-                                <td style="font-size: 12px;">
-                                    <template x-if="item.crypto_tx_id">
-                                        <a class="explorer-link" :href="explorerUrl(item.crypto_symbol, item.crypto_tx_id)" target="_blank" rel="noopener">
-                                            <code x-text="item.crypto_symbol + ': ' + item.crypto_tx_id.slice(0, 10) + '…'"></code>
-                                        </a>
-                                    </template>
-                                    <template x-if="!item.crypto_tx_id">
-                                        <span>-</span>
-                                    </template>
-                                </td>
-                                <td style="font-size: 12px; color: var(--text-muted);" x-text="item.notes || '-'"></td>
-                            </tr>
-                        </template>
-                    </tbody>
-                </table>
-            </div>
-
-            <div class="selection-bar" x-show="selectedIds.length" x-cloak>
-                <div>
-                    <strong x-text="selectedIds.length + ' selected · $' + selectedTotal.toFixed(2) + ' owed'"></strong>
-                    <div class="muted">Use the sidebar actions to verify a crypto payment or mark these paid manually.</div>
-                </div>
-                <button class="btn btn-secondary btn-sm" style="width:auto;" @click="selectAll(false)">Clear selection</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Modal: Unknown Contractor Approval -->
-<div class="modal-overlay" x-show="approvalModal.open" x-cloak>
-    <div class="modal">
-        <div class="modal-header">
-            <h3>Unknown Contractors Detected</h3>
-            <button class="btn btn-secondary btn-sm" @click="approvalModal.open = false">✕</button>
-        </div>
-        <p style="font-size: 13px; color: var(--text-muted);">
-            The OCR parser identified names not currently in your contractor database. Map typos to existing contractors or leave as-is to add them.
-        </p>
-        <div>
-            <template x-for="unknown in approvalModal.unknownContractors" :key="unknown">
-                <div class="mapping-row">
-                    <div x-text="unknown"></div>
-                    <select @change="approvalModal.mappings[unknown] = $event.target.value">
-                        <option :value="unknown" x-text="'[Add as new: &quot;' + unknown + '&quot;]'"></option>
-                        <template x-for="exist in approvalModal.existingContractors" :key="exist">
-                            <option :value="exist" x-text="'Map to: ' + exist"></option>
-                        </template>
-                    </select>
-                </div>
-            </template>
-        </div>
-        <div class="flex-actions">
-            <button class="btn" @click="submitConfirmedUpload()">Confirm & Import Ledger</button>
-            <button class="btn btn-secondary" @click="approvalModal.open = false">Cancel</button>
-        </div>
-    </div>
-</div>
-
-<!-- Modal: Create Team -->
-<div class="modal-overlay" x-show="teamModal.open" x-cloak>
-    <div class="modal">
-        <div class="modal-header">
-            <h3>Create New Team</h3>
-            <button class="btn btn-secondary btn-sm" @click="teamModal.open = false">✕</button>
-        </div>
-        <div class="form-group">
-            <label for="teamName">Team Name</label>
-            <input type="text" id="teamName" x-model="teamModal.name" placeholder="e.g. Night Shift / Devs">
-        </div>
-        <div class="form-group">
-            <label>Select Contractors for Team</label>
-            <div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); padding: 10px; border-radius: 6px;">
-                <template x-for="c in contractors" :key="c.id">
-                    <label class="checkbox-label" style="margin-bottom: 6px;">
-                        <input type="checkbox" :value="c.name" @change="toggleTeamMember(c.name, $event.target.checked)">
-                        <span x-text="c.name"></span>
-                    </label>
-                </template>
-            </div>
-        </div>
-        <div class="flex-actions">
-            <button class="btn" @click="submitCreateTeam()">Save Team</button>
-            <button class="btn btn-secondary" @click="teamModal.open = false">Cancel</button>
-        </div>
-    </div>
-</div>
-
-<!-- Modal: Edit Teams (add/remove members, delete team) -->
-<div class="modal-overlay" x-show="teamsModal.open" x-cloak>
-    <div class="modal" style="max-width: 620px;">
-        <div class="modal-header">
-            <h3>Edit Teams</h3>
-            <button class="btn btn-secondary btn-sm" @click="teamsModal.open = false">✕</button>
-        </div>
-        <template x-if="!teams.length">
-            <p style="font-size: 13px; color: var(--text-muted);">
-                No teams yet — use "+ Create New Team" first.
-            </p>
+    <div>
+      <div class="chips">
+        <span class="lead">Quick select</span>
+        <button class="chip" @click="selectAll(true)">All unpaid</button>
+        <button class="chip" @click="selectAll(false)">None</button>
+        <template x-for="team in teams" :key="team.id">
+          <button class="chip" :class="{on:filters.team===team.name}" @click="toggleTeamFilter(team.name)" x-text="team.name"></button>
         </template>
-        <div style="max-height: 60vh; overflow-y: auto;">
-            <template x-for="team in teams" :key="team.id">
-                <div class="card" style="margin-bottom: 12px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                        <strong x-text="team.name"></strong>
-                        <button class="btn btn-danger btn-sm" style="width: auto;" @click="deleteTeam(team)">Delete Team</button>
-                    </div>
-                    <div style="margin-bottom: 12px;">
-                        <template x-for="memberName in team.members" :key="memberName">
-                            <span class="contractor-tag">
-                                <span x-text="memberName"></span>
-                                <button @click="removeTeamMember(team, memberName)" title="Remove from team">✕</button>
-                            </span>
-                        </template>
-                        <span x-show="!team.members.length" style="font-size: 12px; color: var(--text-muted);">No members yet.</span>
-                    </div>
-                    <div style="display: flex; gap: 8px;">
-                        <select x-model="team.pendingAdd" style="flex: 1;">
-                            <option value="">+ Add contractor…</option>
-                            <template x-for="c in contractors.filter(c => !team.members.map(m => m.toLowerCase()).includes(c.name.toLowerCase()))" :key="c.id">
-                                <option :value="c.name" x-text="c.name"></option>
-                            </template>
-                        </select>
-                        <button class="btn btn-secondary btn-sm" style="width: auto;" @click="addTeamMember(team)" :disabled="!team.pendingAdd">Add</button>
-                    </div>
-                </div>
+      </div>
+      <div class="filters">
+        <input type="text" x-model="filters.search" placeholder="Search contractor">
+        <select x-model="filters.status">
+          <option value="all">Everyone</option>
+          <option value="unpaid">Still owes</option>
+          <option value="paid">Settled</option>
+        </select>
+        <button class="linkish" x-show="filters.team||filters.search||filters.status!=='all'" @click="clearFilters()">Clear filters</button>
+      </div>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th class="nosort" style="width:36px"><input type="checkbox" @click="selectAll($event.target.checked)" :checked="filteredLedgers.length && filteredLedgers.filter(r=>!isPaid(r.status)).every(r=>selectedIds.includes(r.id))"></th>
+            <th @click="setSort('contractor')">Contractor<span class="arr" x-text="arrow('contractor')"></span></th>
+            <th @click="setSort('amount_owed_usd')">Owed<span class="arr" x-text="arrow('amount_owed_usd')"></span></th>
+            <th @click="setSort('status')">Status<span class="arr" x-text="arrow('status')"></span></th>
+            <th class="nosort">Paid via</th>
+            <th @click="setSort('paid_at_est')">Paid at<span class="arr" x-text="arrow('paid_at_est')"></span></th>
+            <th class="nosort">Notes</th>
+          </tr></thead>
+          <tbody>
+            <template x-if="!filteredLedgers.length">
+              <tr><td colspan="7" class="empty" x-text="ledgers.length ? 'Nothing matches these filters.' : 'No week loaded yet — import a screenshot to get started.'"></td></tr>
             </template>
-        </div>
-        <div class="flex-actions">
-            <button class="btn btn-secondary" @click="teamsModal.open = false">Close</button>
-        </div>
-    </div>
-</div>
-
-<!-- Modal: Manage Contractors -->
-<div class="modal-overlay" x-show="contractorModal.open" x-cloak>
-    <div class="modal">
-        <div class="modal-header">
-            <h3>Existing Contractors</h3>
-            <button class="btn btn-secondary btn-sm" @click="contractorModal.open = false">✕</button>
-        </div>
-        <div style="max-height: 300px; overflow-y: auto; margin-bottom: 16px;">
-            <template x-for="c in contractors" :key="c.id">
-                <div class="contractor-tag">
-                    <span class="link" @click="contractorModal.open = false; openHistory(c.id, c.name)" x-text="c.name"></span>
-                    <button @click="deleteContractor(c.id, c.name)">✕</button>
-                </div>
+            <template x-for="item in filteredLedgers" :key="item.id">
+              <tr :class="{paid:isPaid(item.status)}">
+                <td><input type="checkbox" :checked="selectedIds.includes(item.id)" @change="toggleSelect(item.id,$event.target.checked)" x-show="!isPaid(item.status)"></td>
+                <td>
+                  <button class="name" @click="openHistory(item.contractor_id,item.contractor)" x-text="item.contractor"></button>
+                  <span class="credit-pill" x-show="Number(item.credit_balance)>0" title="Advance balance available" x-text="'+'+fmt(item.credit_balance)"></span>
+                </td>
+                <td class="amt">
+                  <template x-if="Number(item.credit_applied_usd)>0 && !isPaid(item.status)">
+                    <span><span class="was" x-text="fmt(item.amount_owed_usd)"></span><span class="net" x-text="fmt(item.net_due_usd)"></span></span>
+                  </template>
+                  <template x-if="!(Number(item.credit_applied_usd)>0 && !isPaid(item.status))">
+                    <span x-text="fmt(item.amount_owed_usd)"></span>
+                  </template>
+                </td>
+                <td><span class="status" :class="isPaid(item.status)?'paid':'due'" x-text="isPaid(item.status)?'Settled':'Owes'"></span></td>
+                <td>
+                  <template x-if="item.payment_method">
+                    <button class="method" :class="'m-'+item.payment_method" @click="openDetails(item)" title="View payment details">
+                      <span class="g" x-text="glyph(item.payment_method)"></span><span x-text="methodLabel(item.payment_method)"></span>
+                    </button>
+                  </template>
+                  <template x-if="!item.payment_method"><span style="color:var(--faint)">—</span></template>
+                </td>
+                <td class="mono" style="font-size:12.5px;color:var(--muted)" x-text="item.paid_at_est||'—'"></td>
+                <td class="notes-cell" :title="item.notes||''" x-text="item.notes||'—'"></td>
+              </tr>
             </template>
-        </div>
-        <button class="btn btn-secondary" @click="contractorModal.open = false">Close</button>
+          </tbody>
+        </table>
+      </div>
     </div>
+  </div>
 </div>
 
-<!-- Modal: Contractor History -->
-<div class="modal-overlay" x-show="historyModal.open" x-cloak>
-    <div class="modal" style="max-width: 650px;">
-        <div class="modal-header">
-            <h3 x-text="'Payment History — ' + historyModal.name"></h3>
-            <button class="btn btn-secondary btn-sm" @click="historyModal.open = false">✕</button>
+<div class="selbar" x-show="selectedIds.length" x-cloak>
+  <div>
+    <div class="sum"><span x-text="selectedIds.length"></span> selected · <b x-text="fmt(selectedTotal)"></b> due</div>
+    <div class="sub" x-text="selectedContractorCount===1 ? 'One contractor — overpayments can be banked as advance credit.' : selectedContractorCount+' contractors in this selection.'"></div>
+  </div>
+  <div style="display:flex;gap:8px">
+    <button class="btn" @click="selectAll(false)">Clear</button>
+    <button class="btn primary" @click="openPay('crypto')">Record payment</button>
+  </div>
+</div>
+
+<div class="overlay" x-show="pay.open" x-cloak @keydown.escape.window="pay.open=false">
+  <div class="modal">
+    <div class="mhead"><h3>Record a payment</h3><button class="x" @click="pay.open=false">✕</button></div>
+    <div class="stat3">
+      <div><div class="l">Rows</div><div class="v" x-text="selectedIds.length"></div></div>
+      <div><div class="l">Due</div><div class="v" x-text="fmt(selectedTotal)"></div></div>
+      <div><div class="l">Contractors</div><div class="v" x-text="selectedContractorCount"></div></div>
+    </div>
+    <div class="tabs">
+      <button :class="{on:pay.tab==='crypto'}" @click="pay.tab='crypto'">Crypto</button>
+      <button :class="{on:pay.tab==='manual'}" @click="pay.tab='manual'">Cash app / other</button>
+    </div>
+
+    <div x-show="pay.tab==='crypto'">
+      <div class="field">
+        <label>Coin</label>
+        <select x-model="crypto.symbol" @change="debouncedRefreshEstimate()">
+          <option value="BTC">Bitcoin (BTC)</option>
+          <option value="LTC">Litecoin (LTC)</option>
+          <option value="ETH">Ethereum (ETH)</option>
+          <optgroup label="Ethereum tokens">
+            <option value="USDT">Tether (USDT)</option>
+            <option value="USDC">USD Coin (USDC)</option>
+            <option value="DAI">Dai (DAI)</option>
+          </optgroup>
+        </select>
+      </div>
+      <div class="field">
+        <label>Transaction hash or explorer link</label>
+        <input type="text" x-model="crypto.txInput" placeholder="Paste a hash or a link from any explorer">
+        <div class="hint">From a link we detect the coin automatically. A bare hash uses the coin above.</div>
+      </div>
+      <div class="hint" x-show="estimate.amount">
+        Roughly <span class="mono" x-text="estimate.amount"></span> <span x-text="crypto.symbol"></span> at today's rate. The payment itself is always valued at the moment it was sent.
+      </div>
+      <div class="actions">
+        <button class="btn primary" :disabled="crypto.busy||!crypto.txInput" @click="reconcileCrypto()" x-text="crypto.busy?'Checking the chain…':'Verify and record'"></button>
+      </div>
+    </div>
+
+    <div x-show="pay.tab==='manual'">
+      <div class="row2">
+        <div class="field">
+          <label>Paid with</label>
+          <select x-model="manual.method">
+            <option value="CASHAPP">Cash App</option>
+            <option value="VENMO">Venmo</option>
+            <option value="ZELLE">Zelle</option>
+            <option value="CASH">Cash</option>
+            <option value="OTHER">Other</option>
+          </select>
         </div>
-        <template x-if="historyModal.loading">
-            <div style="text-align:center; padding: 30px; color: var(--text-muted);">Loading…</div>
-        </template>
-        <template x-if="!historyModal.loading">
-            <div>
-                <div class="summary-strip">
-                    <div class="stat">Total owed (all time)<strong x-text="'$' + historyModal.totalOwed.toFixed(2)"></strong></div>
-                    <div class="stat">Total paid<strong x-text="'$' + historyModal.totalPaid.toFixed(2)"></strong></div>
-                </div>
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr><th>Week</th><th>Amount</th><th>Status</th><th>Paid At</th><th>Tx</th></tr>
-                        </thead>
-                        <tbody>
-                            <template x-for="row in historyModal.history" :key="row.id">
-                                <tr>
-                                    <td x-text="row.week_date"></td>
-                                    <td x-text="'$' + Number(row.amount_owed_usd).toFixed(2)"></td>
-                                    <td x-text="row.status"></td>
-                                    <td style="font-size:12px; color: var(--text-muted);" x-text="row.paid_at_est || '-'"></td>
-                                    <td style="font-size:12px;">
-                                        <template x-if="row.crypto_tx_id">
-                                            <a class="explorer-link" :href="explorerUrl(row.crypto_symbol, row.crypto_tx_id)" target="_blank" rel="noopener" x-text="row.crypto_symbol"></a>
-                                        </template>
-                                        <template x-if="!row.crypto_tx_id"><span>-</span></template>
-                                    </td>
-                                </tr>
-                            </template>
-                        </tbody>
-                    </table>
-                </div>
+        <div class="field">
+          <label>Amount received (USD)</label>
+          <input type="number" step="0.01" min="0" x-model="manual.amount" :placeholder="fmt(selectedTotal)">
+        </div>
+      </div>
+      <div class="field">
+        <label>Note (optional)</label>
+        <input type="text" x-model="manual.notes" placeholder="e.g. $cashtag, reference, who approved">
+      </div>
+      <div class="hint" x-show="manualDiff!==null">
+        <template x-if="manualDiff>0.009"><span>That's <b class="mono" x-text="fmt(manualDiff)"></b> more than due<span x-show="selectedContractorCount===1"> — the extra will be banked as advance credit</span>.</span></template>
+        <template x-if="manualDiff<-0.009"><span>That's <b class="mono" x-text="fmt(-manualDiff)"></b> short — you'll be asked to confirm.</span></template>
+        <template x-if="Math.abs(manualDiff)<=0.009"><span>Matches what's due.</span></template>
+      </div>
+      <label class="check field" x-show="selectedContractorCount===1 && manualDiff>0.009"><input type="checkbox" x-model="manual.bankExcess"> Bank the extra as advance credit</label>
+      <div class="actions">
+        <button class="btn primary" :disabled="manual.busy||!manual.amount" @click="markPaidManual()" x-text="manual.busy?'Saving…':'Record payment'"></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" x-show="mismatch.open" x-cloak>
+  <div class="modal">
+    <div class="mhead"><h3>Amount doesn't match</h3><button class="x" @click="mismatch.open=false">✕</button></div>
+    <p style="color:var(--muted);margin:0 0 6px" x-text="mismatch.kind==='crypto' ? 'The transaction is real and confirmed, but it doesn\'t add up to what\'s due.' : 'The amount entered doesn\'t add up to what\'s due.'"></p>
+    <div class="stat3">
+      <div><div class="l">Due</div><div class="v" x-text="fmt(mismatch.totalOwed)"></div></div>
+      <div><div class="l">Received</div><div class="v" x-text="fmt(mismatch.receivedUsd)"></div></div>
+      <div><div class="l" x-text="mismatch.difference<0?'Short by':'Over by'"></div><div class="v" :style="mismatch.difference<0?'color:var(--red)':'color:var(--amber)'" x-text="fmt(Math.abs(mismatch.difference))"></div></div>
+    </div>
+    <label class="check field" x-show="mismatch.difference>0 && mismatch.singleContractor"><input type="checkbox" x-model="mismatch.bankExcess"> Bank the extra <b x-text="fmt(mismatch.difference)"></b> as advance credit for future weeks</label>
+    <div class="hint" x-show="mismatch.difference>0 && !mismatch.singleContractor">Several contractors are in this selection, so the extra can't be assigned to one balance — it'll be noted instead.</div>
+    <div class="field" style="margin-top:8px">
+      <label>Note (saved on the rows)</label>
+      <input type="text" x-model="mismatch.note" placeholder="e.g. network fee, partial payment approved by …">
+    </div>
+    <div class="actions">
+      <button class="btn danger" :disabled="mismatch.busy" @click="submitOverride()" x-text="mismatch.busy?'Saving…':'Accept and mark settled'"></button>
+      <button class="btn" @click="mismatch.open=false">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" x-show="details.open" x-cloak @keydown.escape.window="details.open=false">
+  <div class="modal">
+    <div class="mhead"><h3 x-text="details.item?.contractor"></h3><button class="x" @click="details.open=false">✕</button></div>
+    <template x-if="details.item">
+      <dl class="kv">
+        <dt>Week</dt><dd x-text="details.item.week_date"></dd>
+        <dt>Paid via</dt><dd><span class="method" :class="'m-'+details.item.payment_method" style="cursor:default"><span class="g" x-text="glyph(details.item.payment_method)"></span><span x-text="methodLabel(details.item.payment_method)"></span></span></dd>
+        <dt>Owed</dt><dd class="mono" x-text="fmt(details.item.amount_owed_usd)"></dd>
+        <template x-if="Number(details.item.credit_applied_usd)>0"><dt>Advance credit used</dt></template>
+        <template x-if="Number(details.item.credit_applied_usd)>0"><dd class="mono" x-text="fmt(details.item.credit_applied_usd)"></dd></template>
+        <dt>Amount received</dt><dd class="mono" x-text="details.item.amount_paid_usd!=null ? fmt(details.item.amount_paid_usd) : '—'"></dd>
+        <dt>Paid at</dt><dd class="mono" x-text="details.item.paid_at_est||'—'"></dd>
+        <template x-if="details.item.crypto_tx_id"><dt>Transaction</dt></template>
+        <template x-if="details.item.crypto_tx_id">
+          <dd>
+            <div class="hash" x-text="details.item.crypto_tx_id"></div>
+            <div style="display:flex;gap:8px;margin-top:6px">
+              <button class="btn sm" @click="copyText(details.item.crypto_tx_id)">Copy hash</button>
+              <a class="btn sm" :href="explorerUrl(details.item.payment_method,details.item.crypto_tx_id)" target="_blank" rel="noopener">Open in explorer</a>
             </div>
+          </dd>
         </template>
-    </div>
-</div>
-
-<!-- Modal: Amount Mismatch Override -->
-<div class="modal-overlay" x-show="mismatchModal.open" x-cloak>
-    <div class="modal">
-        <div class="modal-header">
-            <h3>Amount Doesn't Match</h3>
-            <button class="btn btn-secondary btn-sm" @click="mismatchModal.open = false">✕</button>
-        </div>
-        <p style="font-size: 13px; color: var(--text-muted);">
-            This transaction was verified on-chain, but it doesn't add up to what's owed.
-            You can override and mark it paid anyway — useful for a small shortfall from
-            network fees, a slightly wrong amount, or an approved partial payment.
-        </p>
-        <div class="summary-strip">
-            <div class="stat">Owed<strong x-text="'$' + Number(mismatchModal.totalOwed).toFixed(2)"></strong></div>
-            <div class="stat">Received<strong x-text="'$' + Number(mismatchModal.receivedUsd).toFixed(2)"></strong></div>
-            <div class="stat">
-                <span x-text="mismatchModal.difference < 0 ? 'Underpaid by' : 'Overpaid by'"></span>
-                <strong :style="mismatchModal.difference < 0 ? 'color: var(--danger)' : 'color: var(--warning)'"
-                        x-text="'$' + Math.abs(mismatchModal.difference).toFixed(2)"></strong>
-            </div>
-        </div>
-        <div class="form-group">
-            <label for="overrideNote">Note (optional — saved on the ledger entry)</label>
-            <input type="text" id="overrideNote" x-model="mismatchModal.note"
-                   placeholder="e.g. Sent minus network fee, approved by manager">
-        </div>
-        <div class="flex-actions">
-            <button class="btn btn-danger" :disabled="mismatchModal.busy" @click="submitOverride()">
-                <span x-text="mismatchModal.busy ? 'Marking Paid…' : 'Override & Mark Paid Anyway'"></span>
-            </button>
-            <button class="btn btn-secondary" @click="mismatchModal.open = false">Cancel</button>
-        </div>
-    </div>
-</div>
-
-<!-- Toasts -->
-<div class="toast-stack">
-    <template x-for="t in toasts" :key="t.id">
-        <div class="toast" :class="'toast-' + t.type" x-text="t.message"></div>
+        <dt>Notes</dt><dd x-text="details.item.notes||'—'"></dd>
+      </dl>
     </template>
+  </div>
+</div>
+
+<div class="overlay" x-show="approval.open" x-cloak>
+  <div class="modal">
+    <div class="mhead"><h3>New names in this screenshot</h3><button class="x" @click="approval.open=false">✕</button></div>
+    <p style="color:var(--muted);margin:0 0 12px">These names aren't in your contractor list yet. Map any typos to an existing contractor, or keep them to add as new.</p>
+    <template x-for="u in approval.unknown" :key="u">
+      <div class="row2" style="margin-bottom:8px">
+        <div style="display:flex;align-items:center" x-text="u"></div>
+        <select @change="approval.mappings[u]=$event.target.value">
+          <option :value="u" x-text="'Add as new: '+u"></option>
+          <template x-for="e in approval.existing" :key="e"><option :value="e" x-text="'Same as: '+e"></option></template>
+        </select>
+      </div>
+    </template>
+    <div class="actions">
+      <button class="btn primary" @click="submitConfirmedUpload()">Import week</button>
+      <button class="btn" @click="approval.open=false">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" x-show="teamModal.open" x-cloak>
+  <div class="modal">
+    <div class="mhead"><h3>Create a team</h3><button class="x" @click="teamModal.open=false">✕</button></div>
+    <div class="field"><label>Team name</label><input type="text" x-model="teamModal.name" placeholder="e.g. Night shift"></div>
+    <div class="field"><label>Members</label>
+      <div style="max-height:220px;overflow-y:auto;border:1px solid var(--rule);border-radius:8px;padding:8px 10px">
+        <template x-for="c in contractors" :key="c.id">
+          <label class="check" style="margin:5px 0"><input type="checkbox" :value="c.name" @change="toggleTeamMember(c.name,$event.target.checked)"> <span x-text="c.name"></span></label>
+        </template>
+      </div>
+    </div>
+    <div class="actions"><button class="btn primary" @click="submitCreateTeam()">Save team</button><button class="btn" @click="teamModal.open=false">Cancel</button></div>
+  </div>
+</div>
+
+<div class="overlay" x-show="teamsModal.open" x-cloak>
+  <div class="modal wide">
+    <div class="mhead"><h3>Edit teams</h3><button class="x" @click="teamsModal.open=false">✕</button></div>
+    <p x-show="!teams.length" style="color:var(--muted)">No teams yet.</p>
+    <div style="max-height:62vh;overflow-y:auto">
+      <template x-for="team in teams" :key="team.id">
+        <div class="card" style="margin:0 0 10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <strong x-text="team.name"></strong>
+            <button class="btn sm danger" @click="deleteTeam(team)">Delete team</button>
+          </div>
+          <div style="margin-bottom:10px">
+            <template x-for="m in team.members" :key="m"><span class="tag"><span x-text="m"></span><button @click="removeTeamMember(team,m)" title="Remove">✕</button></span></template>
+            <span x-show="!team.members.length" style="color:var(--faint);font-size:12.5px">No members yet.</span>
+          </div>
+          <div class="row2">
+            <select x-model="team.pendingAdd">
+              <option value="">Add a contractor…</option>
+              <template x-for="c in contractors.filter(c=>!team.members.map(m=>m.toLowerCase()).includes(c.name.toLowerCase()))" :key="c.id"><option :value="c.name" x-text="c.name"></option></template>
+            </select>
+            <button class="btn" style="flex:0 0 auto" :disabled="!team.pendingAdd" @click="addTeamMember(team)">Add</button>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" x-show="contractorModal.open" x-cloak>
+  <div class="modal wide">
+    <div class="mhead"><h3>Contractors &amp; advance balances</h3><button class="x" @click="contractorModal.open=false">✕</button></div>
+    <div class="tablewrap" style="max-height:60vh;overflow:auto">
+      <table>
+        <thead><tr><th class="nosort">Contractor</th><th class="nosort">Advance balance</th><th class="nosort"></th></tr></thead>
+        <tbody>
+          <template x-for="c in contractors" :key="c.id">
+            <tr>
+              <td><button class="name" @click="contractorModal.open=false;openHistory(c.id,c.name)" x-text="c.name"></button></td>
+              <td class="amt" :style="Number(c.credit_balance)>0?'color:var(--amber)':'color:var(--faint)'" x-text="fmt(c.credit_balance)"></td>
+              <td style="text-align:right"><button class="btn sm danger" @click="deleteContractor(c.id,c.name)">Delete</button></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" x-show="history.open" x-cloak @keydown.escape.window="history.open=false">
+  <div class="modal wide">
+    <div class="mhead"><h3 x-text="history.name"></h3><button class="x" @click="history.open=false">✕</button></div>
+    <template x-if="history.loading"><div class="empty">Loading…</div></template>
+    <template x-if="!history.loading">
+      <div>
+        <div class="stat3">
+          <div><div class="l">Owed all time</div><div class="v" x-text="fmt(history.totalOwed)"></div></div>
+          <div><div class="l">Settled</div><div class="v" x-text="fmt(history.totalPaid)"></div></div>
+          <div><div class="l">Advance balance</div><div class="v" :style="history.creditBalance>0?'color:var(--amber)':''" x-text="fmt(history.creditBalance)"></div></div>
+        </div>
+
+        <div class="card" style="margin:0 0 12px;background:var(--ink)">
+          <h2 style="font-size:13px">Record an advance payment</h2>
+          <div class="row2">
+            <input type="number" step="0.01" min="0" x-model="history.advanceAmount" placeholder="Amount (USD)">
+            <input type="text" x-model="history.advanceNote" placeholder="Note, e.g. paid ahead via Venmo">
+            <button class="btn primary" style="flex:0 0 auto" :disabled="!history.advanceAmount" @click="addAdvance()">Add to balance</button>
+          </div>
+          <div class="hint">Advance balance is drawn down against unpaid weeks automatically, oldest first, until it runs out.</div>
+        </div>
+
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th class="nosort">Week</th><th class="nosort">Owed</th><th class="nosort">Status</th><th class="nosort">Paid via</th><th class="nosort">Paid at</th></tr></thead>
+            <tbody>
+              <template x-for="r in history.rows" :key="r.id">
+                <tr>
+                  <td x-text="r.week_date"></td>
+                  <td class="amt" x-text="fmt(r.amount_owed_usd)"></td>
+                  <td><span class="status" :class="isPaid(r.status)?'paid':'due'" x-text="isPaid(r.status)?'Settled':'Owes'"></span></td>
+                  <td>
+                    <template x-if="r.payment_method"><button class="method" :class="'m-'+r.payment_method" @click="openDetails(r)"><span class="g" x-text="glyph(r.payment_method)"></span><span x-text="methodLabel(r.payment_method)"></span></button></template>
+                    <template x-if="!r.payment_method"><span style="color:var(--faint)">—</span></template>
+                  </td>
+                  <td class="mono" style="font-size:12.5px;color:var(--muted)" x-text="r.paid_at_est||'—'"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+
+        <template x-if="history.credits.length">
+          <div style="margin-top:14px">
+            <h2 style="font-size:13px;margin-bottom:8px">Advance balance activity</h2>
+            <div class="tablewrap"><table>
+              <tbody>
+                <template x-for="t in history.credits" :key="t.id">
+                  <tr>
+                    <td class="mono" style="color:var(--muted);font-size:12.5px" x-text="t.created_at_est"></td>
+                    <td class="amt" :style="Number(t.amount_usd)>=0?'color:var(--green)':'color:var(--amber)'" x-text="(Number(t.amount_usd)>=0?'+':'−')+fmt(Math.abs(t.amount_usd))"></td>
+                    <td style="color:var(--muted)" x-text="t.reason"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table></div>
+          </div>
+        </template>
+      </div>
+    </template>
+  </div>
+</div>
+
+<div class="toasts">
+  <template x-for="t in toasts" :key="t.id"><div class="toast" :class="t.type" x-text="t.message"></div></template>
 </div>
 
 <script>
-function safeParseSeed(elementId, fallback) {
-    // Defensive: if any single seed block fails to parse (bad data, an
-    // encoding edge case, whatever), this only loses that one dataset
-    // instead of throwing inside app() and silently breaking the ENTIRE
-    // page's reactivity — which previously made unrelated things like
-    // teams or contractors look "missing" even when they loaded fine.
-    try {
-        const el = document.getElementById(elementId);
-        return el ? JSON.parse(el.textContent) : fallback;
-    } catch (e) {
-        console.error(`Failed to parse seed data for #${elementId}:`, e);
-        return fallback;
-    }
+function safeParseSeed(id, fallback){
+  try{ const el=document.getElementById(id); return el?JSON.parse(el.textContent):fallback; }
+  catch(e){ console.error('seed parse failed', id, e); return fallback; }
 }
+const METHODS = {
+  BTC:{label:'BTC',g:'₿'}, LTC:{label:'LTC',g:'Ł'}, ETH:{label:'ETH',g:'Ξ'},
+  USDT:{label:'USDT',g:'T'}, USDC:{label:'USDC',g:'C'}, DAI:{label:'DAI',g:'D'},
+  CASHAPP:{label:'Cash App',g:'$'}, VENMO:{label:'Venmo',g:'V'}, ZELLE:{label:'Zelle',g:'Z'},
+  CASH:{label:'Cash',g:'¢'}, OTHER:{label:'Other',g:'•'}, CREDIT:{label:'Advance credit',g:'↺'},
+};
+function app(){
+  return {
+    ledgers: safeParseSeed('ledgers-data',[]),
+    teams: safeParseSeed('teams-data',[]).map(t=>({...t,pendingAdd:''})),
+    contractors: safeParseSeed('contractors-data',[]),
+    weeks: safeParseSeed('weeks-data',[]),
+    selectedWeek: (document.getElementById('selected-week-data')?.textContent||'').trim(),
 
-function app() {
-    return {
-        // Server-seeded state
-        ledgers: safeParseSeed('ledgers-data', []),
-        teams: safeParseSeed('teams-data', []).map(t => ({ ...t, pendingAdd: '' })),
-        contractors: safeParseSeed('contractors-data', []),
-        weeks: safeParseSeed('weeks-data', []),
-        selectedWeek: (document.getElementById('selected-week-data')?.textContent || '').trim(),
+    selectedIds:[], filters:{search:'',status:'all',team:''}, sortKey:'contractor', sortDir:'asc', toasts:[],
+    upload:{pickedDate:'',weekDate:'',overwrite:false,file:null,fileName:'',previewSrc:null,dragOver:false,busy:false},
+    pay:{open:false,tab:'crypto'},
+    crypto:{symbol:'BTC',txInput:'',busy:false},
+    manual:{method:'CASHAPP',amount:'',notes:'',busy:false,bankExcess:true},
+    estimate:{amount:null,price:null,priceSymbol:null,fetchedAt:0},
+    mismatch:{open:false,busy:false,kind:'crypto',ledgerIds:[],txInput:'',symbol:'',method:'',amount:0,totalOwed:0,receivedUsd:0,difference:0,note:'',bankExcess:true,singleContractor:false},
+    details:{open:false,item:null},
+    approval:{open:false,weekDate:'',overwrite:false,records:[],unknown:[],existing:[],mappings:{}},
+    teamModal:{open:false,name:'',members:[]}, teamsModal:{open:false}, contractorModal:{open:false},
+    history:{open:false,loading:false,id:null,name:'',totalOwed:0,totalPaid:0,creditBalance:0,rows:[],credits:[],advanceAmount:'',advanceNote:''},
 
-        // UI state
-        selectedIds: [],
-        filters: { search: '', status: 'all', team: '' },
-        sortKey: 'contractor',
-        sortDir: 'asc',
-        toasts: [],
+    init(){ this.$watch('selectedIds',()=>this.debouncedRefreshEstimate()); },
 
-        upload: { pickedDate: '', weekDate: '', overwrite: false, file: null, fileName: '', previewSrc: null, dragOver: false, busy: false },
-        crypto: { symbol: 'LTC', txInput: '', busy: false },
-        manual: { notes: '', busy: false },
-        estimate: { amount: null, price: null, priceSymbol: null, fetchedAt: 0 },
+    fmt(v){ const n=Number(v||0); return '$'+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); },
+    isPaid(s){ const u=(s||'').toUpperCase(); return u==='PAID'||u==='MANUALLY_PAID'; },
+    glyph(m){ return (METHODS[(m||'').toUpperCase()]||METHODS.OTHER).g; },
+    methodLabel(m){ return (METHODS[(m||'').toUpperCase()]||{label:m}).label; },
+    explorerUrl(sym,hash){ const s=(sym||'').toUpperCase(); if(!hash) return '#';
+      if(['ETH','USDT','USDC','DAI'].includes(s)) return `https://etherscan.io/tx/${hash}`;
+      if(s==='BTC') return `https://blockstream.info/tx/${hash}`;
+      if(s==='LTC') return `https://blockchair.com/litecoin/transaction/${hash}`; return '#'; },
+    notify(message,type='info'){ const id=Date.now()+Math.random(); this.toasts.push({id,message,type}); setTimeout(()=>{this.toasts=this.toasts.filter(t=>t.id!==id)},5200); },
+    async copyText(t){ try{ await navigator.clipboard.writeText(t); this.notify('Copied.','success'); }catch(e){ this.notify("Couldn't copy — select it manually.",'error'); } },
+    async fetchWithTimeout(url,options={},timeoutMs=60000){ const c=new AbortController(); const t=setTimeout(()=>c.abort(),timeoutMs);
+      try{ return await fetch(url,{...options,signal:c.signal}); } finally{ clearTimeout(t); } },
+    post(url,body){ return this.fetchWithTimeout(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); },
 
-        approvalModal: { open: false, weekDate: '', overwrite: false, records: [], unknownContractors: [], existingContractors: [], mappings: {} },
-        teamModal: { open: false, name: '', members: [] },
-        teamsModal: { open: false },
-        contractorModal: { open: false },
-        historyModal: { open: false, loading: false, name: '', totalOwed: 0, totalPaid: 0, history: [] },
-        mismatchModal: {
-            open: false, busy: false, ledgerIds: [], txInput: '', symbol: '',
-            totalOwed: 0, receivedUsd: 0, difference: 0, note: ''
-        },
+    get filteredLedgers(){
+      let rows=this.ledgers.slice();
+      if(this.filters.status==='unpaid') rows=rows.filter(r=>!this.isPaid(r.status));
+      else if(this.filters.status==='paid') rows=rows.filter(r=>this.isPaid(r.status));
+      if(this.filters.team){ const t=this.teams.find(x=>x.name===this.filters.team); const m=(t?.members||[]).map(s=>s.toLowerCase()); rows=rows.filter(r=>m.includes(r.contractor.toLowerCase())); }
+      if(this.filters.search.trim()){ const q=this.filters.search.trim().toLowerCase(); rows=rows.filter(r=>r.contractor.toLowerCase().includes(q)); }
+      const k=this.sortKey, d=this.sortDir==='asc'?1:-1;
+      rows.sort((a,b)=>{ let av=a[k],bv=b[k]; if(k==='amount_owed_usd'){av=Number(av);bv=Number(bv);} av=av??''; bv=bv??''; return av<bv?-d:av>bv?d:0; });
+      return rows;
+    },
+    get totalWeek(){ return this.ledgers.reduce((s,r)=>s+Number(r.amount_owed_usd),0); },
+    get totalPaid(){ return this.ledgers.filter(r=>this.isPaid(r.status)).reduce((s,r)=>s+Number(r.amount_owed_usd),0); },
+    get totalCreditApplied(){ return this.ledgers.reduce((s,r)=>s+Number(r.credit_applied_usd||0),0); },
+    get totalOutstanding(){ return this.ledgers.filter(r=>!this.isPaid(r.status)).reduce((s,r)=>s+Number(r.net_due_usd ?? r.amount_owed_usd),0); },
+    get pctPaid(){ return this.totalWeek? Math.min(100,Math.round((this.totalWeek-this.totalOutstanding)/this.totalWeek*100)) : 0; },
+    get paidCount(){ return this.ledgers.filter(r=>this.isPaid(r.status)).length; },
+    get selectedRows(){ return this.ledgers.filter(r=>this.selectedIds.includes(r.id)); },
+    get selectedTotal(){ return this.selectedRows.reduce((s,r)=>s+Number(r.net_due_usd ?? r.amount_owed_usd),0); },
+    get selectedContractorCount(){ return new Set(this.selectedRows.map(r=>r.contractor_id)).size; },
+    get manualDiff(){ if(this.manual.amount===''||this.manual.amount===null) return null; return Number(this.manual.amount)-this.selectedTotal; },
 
-        init() {
-            this.$watch('selectedIds', () => this.debouncedRefreshEstimate());
-        },
+    setSort(k){ if(this.sortKey===k) this.sortDir=this.sortDir==='asc'?'desc':'asc'; else{this.sortKey=k;this.sortDir='asc';} },
+    arrow(k){ return this.sortKey!==k?'':(this.sortDir==='asc'?'▲':'▼'); },
+    clearFilters(){ this.filters={search:'',status:'all',team:''}; },
+    toggleTeamFilter(n){ this.filters.team=this.filters.team===n?'':n; },
+    toggleSelect(id,on){ if(on){ if(!this.selectedIds.includes(id)) this.selectedIds.push(id);} else this.selectedIds=this.selectedIds.filter(x=>x!==id); },
+    selectAll(on){ if(on){ const ids=this.filteredLedgers.filter(r=>!this.isPaid(r.status)).map(r=>r.id); this.selectedIds=Array.from(new Set([...this.selectedIds,...ids])); } else this.selectedIds=[]; },
+    openPay(tab){ this.pay.tab=tab; this.pay.open=true; this.manual.amount=''; this.refreshEstimate(); },
+    openDetails(item){ this.details={open:true,item}; },
 
-        // ---------- toasts ----------
-        notify(message, type = 'info') {
-            const id = Date.now() + Math.random();
-            this.toasts.push({ id, message, type });
-            setTimeout(() => { this.toasts = this.toasts.filter(t => t.id !== id); }, 5000);
-        },
+    async loadWeek(week){
+      try{ const res=await fetch(`/api/ledgers?week_date=${encodeURIComponent(week)}`); const d=await res.json();
+        if(d.status==='success'){ this.ledgers=d.ledgers; if(d.contractors) this.contractors=d.contractors; this.selectedWeek=d.week_date||week; this.selectedIds=[]; history.replaceState(null,'',`/?selected_week=${encodeURIComponent(this.selectedWeek)}`); }
+      }catch(e){ this.notify("Couldn't load that week.",'error'); }
+    },
+    async refreshLedgers(){ await this.loadWeek(this.selectedWeek); },
 
-        // ---------- network helper ----------
-        async fetchWithTimeout(url, options = {}, timeoutMs = 60000) {
-            // Blockchain verification can involve several sequential
-            // outbound calls on the server; if the server (or a block
-            // explorer it depends on) ever hangs instead of failing fast,
-            // a plain fetch() with no timeout would leave the button stuck
-            // on "Verifying…" indefinitely with zero feedback. This bounds
-            // it to a clear failure instead of a silent, unbounded wait.
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), timeoutMs);
-            try {
-                return await fetch(url, { ...options, signal: controller.signal });
-            } finally {
-                clearTimeout(timer);
-            }
-        },
+    openCalendar(e){ try{ if(e.target.showPicker) e.target.showPicker(); }catch(_){} },
+    onPickWeek(){
+      if(!this.upload.pickedDate){ this.upload.weekDate=''; return; }
+      const [y,m,d]=this.upload.pickedDate.split('-').map(Number); const p=new Date(y,m-1,d);
+      const dow=p.getDay(); const mon=new Date(p); mon.setDate(p.getDate()+(dow===0?-6:1-dow)); const sun=new Date(mon); sun.setDate(mon.getDate()+6);
+      const f=(dt,yr)=>dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:yr?'numeric':undefined});
+      this.upload.weekDate = mon.getMonth()===sun.getMonth() ? `${f(mon)} - ${sun.getDate()}, ${sun.getFullYear()}` : `${f(mon)} - ${f(sun,true)}`;
+    },
 
-        // ---------- status helpers ----------
-        isPaid(status) {
-            // Centralized, null-safe — and an EXACT match, not a substring
-            // check. "UNPAID".includes("PAID") is true (U-N-P-A-I-D really
-            // does contain "PAID"), so the old substring check flagged
-            // every row — paid or not — as paid, which hid the selection
-            // checkbox for everyone. Only these two literal values count.
-            const s = (status || '').toUpperCase();
-            return s === 'PAID' || s === 'MANUALLY_PAID';
-        },
+    handleFileSelect(e){ this.setUploadFile(e.target.files[0]); },
+    handleDrop(e){ this.upload.dragOver=false; const f=e.dataTransfer.files[0]; if(f) this.setUploadFile(f); },
+    setUploadFile(f){ if(!f||!f.type.startsWith('image/')){ this.notify('Choose an image file.','error'); return; }
+      this.upload.file=f; this.upload.fileName=f.name; const r=new FileReader(); r.onload=ev=>{this.upload.previewSrc=ev.target.result}; r.readAsDataURL(f); },
+    resetUpload(){ this.upload={...this.upload,file:null,fileName:'',previewSrc:null,pickedDate:'',weekDate:'',overwrite:false}; },
+    async submitUpload(){
+      const fd=new FormData(); fd.append('file',this.upload.file); fd.append('week_date',this.upload.weekDate.trim()); fd.append('overwrite',this.upload.overwrite);
+      this.upload.busy=true;
+      try{ const res=await this.fetchWithTimeout('/api/upload',{method:'POST',body:fd},120000); const d=await res.json();
+        if(res.ok&&d.status==='success'){ this.notify(`Imported ${d.extracted_count} rows${d.credit_rows_touched?` — advance credit applied to ${d.credit_rows_touched}`:''}.`,'success'); if(!this.weeks.includes(d.week_date)) this.weeks.unshift(d.week_date); await this.loadWeek(d.week_date); this.resetUpload(); }
+        else if(d.status==='approval_required'){ this.approval={open:true,weekDate:d.week_date,overwrite:d.overwrite,records:d.records,unknown:d.unknown_contractors,existing:d.existing_contractors,mappings:{}}; }
+        else this.notify(d.message||"Couldn't read that image.",'error');
+      }catch(e){ this.notify(e.name==='AbortError'?'Import timed out. Try again.':'Network error during import.','error'); }
+      finally{ this.upload.busy=false; }
+    },
+    async submitConfirmedUpload(){
+      try{ const res=await this.post('/api/confirm-upload',{week_date:this.approval.weekDate,records:this.approval.records,overwrite:this.approval.overwrite,mappings:this.approval.mappings}); const d=await res.json();
+        if(res.ok&&d.status==='success'){ this.approval.open=false; this.notify(`Imported ${d.extracted_count} rows.`,'success'); if(!this.weeks.includes(d.week_date)) this.weeks.unshift(d.week_date); await this.loadWeek(d.week_date); this.resetUpload(); }
+        else this.notify(d.message||'Import failed.','error');
+      }catch(e){ this.notify('Network error.','error'); }
+    },
 
-        // ---------- derived ----------
-        get filteredLedgers() {
-            let rows = this.ledgers.slice();
+    debouncedRefreshEstimate(){ clearTimeout(this._est); this._est=setTimeout(()=>this.refreshEstimate(),600); },
+    async refreshEstimate(){
+      if(!this.selectedIds.length){ this.estimate={amount:null,price:null,priceSymbol:null,fetchedAt:0}; return; }
+      const fresh=this.estimate.priceSymbol===this.crypto.symbol&&this.estimate.price&&(Date.now()-this.estimate.fetchedAt)<30000;
+      if(fresh){ this.estimate.amount=(this.selectedTotal/this.estimate.price).toFixed(6); return; }
+      try{ const res=await fetch(`/api/live-price?symbol=${this.crypto.symbol}`); const d=await res.json();
+        if(d.status==='success'){ this.estimate={price:d.price_usd,priceSymbol:this.crypto.symbol,fetchedAt:Date.now(),amount:(this.selectedTotal/d.price_usd).toFixed(6)}; } }catch(e){}
+    },
 
-            if (this.filters.status === 'unpaid') {
-                rows = rows.filter(r => !this.isPaid(r.status));
-            } else if (this.filters.status === 'paid') {
-                rows = rows.filter(r => this.isPaid(r.status));
-            }
+    async reconcileCrypto(){
+      if(!this.selectedIds.length){ this.notify('Select at least one row first.','error'); return; }
+      this.crypto.busy=true;
+      try{ const res=await this.post('/api/reconcile-crypto',{ledger_ids:this.selectedIds,tx_id:this.crypto.txInput.trim(),symbol:this.crypto.symbol}); const d=await res.json();
+        if(d.symbol_auto_corrected&&d.symbol_used){ this.crypto.symbol=d.symbol_used; this.notify(`That link is a ${d.symbol_used} transaction — checked it as ${d.symbol_used}.`,'info'); }
+        if(res.ok&&d.status==='matched'){ this.notify(`Settled — ${this.fmt(d.received_usd)} received (${d.confirmations} confirmation${d.confirmations===1?'':'s'}), sent ${d.paid_at_est}.`,'success'); this.crypto.txInput=''; this.pay.open=false; await this.refreshLedgers(); }
+        else if(d.status==='mismatch'){ this.pay.open=false; this.mismatch={open:true,busy:false,kind:'crypto',ledgerIds:[...this.selectedIds],txInput:this.crypto.txInput.trim(),symbol:d.symbol_used||this.crypto.symbol,method:'',amount:0,totalOwed:d.total_owed,receivedUsd:d.received_usd,difference:d.difference,note:'',bankExcess:true,singleContractor:this.selectedContractorCount===1}; }
+        else this.notify(d.message||"Couldn't verify that transaction.",'error');
+      }catch(e){ this.notify(e.name==='AbortError'?'Verification timed out — the blockchain API may be unreachable. Try again shortly.':'Network error.','error'); }
+      finally{ this.crypto.busy=false; }
+    },
 
-            if (this.filters.team) {
-                const teamObj = this.teams.find(t => t.name === this.filters.team);
-                const members = (teamObj?.members || []).map(m => m.toLowerCase());
-                rows = rows.filter(r => members.includes(r.contractor.toLowerCase()));
-            }
+    async markPaidManual(){
+      if(!this.selectedIds.length){ this.notify('Select at least one row first.','error'); return; }
+      this.manual.busy=true;
+      try{ const res=await this.post('/api/mark-paid-manual',{ledger_ids:this.selectedIds,method:this.manual.method,amount_paid:Number(this.manual.amount),notes:this.manual.notes,override:false,bank_excess:this.manual.bankExcess}); const d=await res.json();
+        if(res.ok&&d.status==='success'){ this.notify(`Recorded ${this.fmt(d.amount_paid)} via ${this.methodLabel(d.method)}${d.excess_credited?` — ${this.fmt(d.excess_credited)} banked as advance credit`:''}.`,'success'); this.manual.amount=''; this.manual.notes=''; this.pay.open=false; await this.refreshLedgers(); }
+        else if(d.status==='mismatch'){ this.pay.open=false; this.mismatch={open:true,busy:false,kind:'manual',ledgerIds:[...this.selectedIds],txInput:'',symbol:'',method:this.manual.method,amount:Number(this.manual.amount),totalOwed:d.total_owed,receivedUsd:d.received_usd,difference:d.difference,note:this.manual.notes,bankExcess:true,singleContractor:this.selectedContractorCount===1}; }
+        else this.notify(d.message||"Couldn't record that payment.",'error');
+      }catch(e){ this.notify('Network error.','error'); }
+      finally{ this.manual.busy=false; }
+    },
 
-            if (this.filters.search.trim()) {
-                const q = this.filters.search.trim().toLowerCase();
-                rows = rows.filter(r => r.contractor.toLowerCase().includes(q));
-            }
+    async submitOverride(){
+      this.mismatch.busy=true;
+      try{
+        let res;
+        if(this.mismatch.kind==='crypto'){
+          res=await this.post('/api/reconcile-crypto',{ledger_ids:this.mismatch.ledgerIds,tx_id:this.mismatch.txInput,symbol:this.mismatch.symbol,override:true,override_note:this.mismatch.note,bank_excess:this.mismatch.bankExcess});
+        } else {
+          res=await this.post('/api/mark-paid-manual',{ledger_ids:this.mismatch.ledgerIds,method:this.mismatch.method,amount_paid:this.mismatch.amount,notes:this.mismatch.note,override:true,bank_excess:this.mismatch.bankExcess});
+        }
+        const d=await res.json();
+        if(res.ok&&(d.status==='matched'||d.status==='success')){
+          const extra=d.excess_credited?` ${this.fmt(d.excess_credited)} banked as advance credit.`:'';
+          this.notify(`Marked settled.${extra}`,'success'); this.mismatch.open=false; this.crypto.txInput=''; this.manual.amount=''; await this.refreshLedgers();
+        } else this.notify(d.message||"Couldn't save that.",'error');
+      }catch(e){ this.notify(e.name==='AbortError'?'Timed out — try again shortly.':'Network error.','error'); }
+      finally{ this.mismatch.busy=false; }
+    },
 
-            const key = this.sortKey;
-            const dir = this.sortDir === 'asc' ? 1 : -1;
-            rows.sort((a, b) => {
-                let av = a[key], bv = b[key];
-                if (key === 'amount_owed_usd') { av = Number(av); bv = Number(bv); }
-                if (av === null || av === undefined) av = '';
-                if (bv === null || bv === undefined) bv = '';
-                if (av < bv) return -1 * dir;
-                if (av > bv) return 1 * dir;
-                return 0;
-            });
+    async applyCreditsToWeek(){
+      try{ const res=await this.post('/api/credits/apply-week',{week_date:this.selectedWeek}); const d=await res.json();
+        if(res.ok){ this.notify(d.rows_touched?`Advance credit applied to ${d.rows_touched} row${d.rows_touched===1?'':'s'}.`:'No advance balances to apply this week.','success'); await this.refreshLedgers(); } else this.notify(d.message||"Couldn't apply credits.",'error');
+      }catch(e){ this.notify('Network error.','error'); }
+    },
+    async addAdvance(){
+      try{ const res=await this.post('/api/credits/add',{contractor_id:this.history.id,amount:Number(this.history.advanceAmount),note:this.history.advanceNote}); const d=await res.json();
+        if(res.ok&&d.status==='success'){ this.notify(`Balance is now ${this.fmt(d.credit_balance)}${d.rows_covered?` — covered ${d.rows_covered} unpaid row${d.rows_covered===1?'':'s'}`:''}.`,'success'); this.history.advanceAmount=''; this.history.advanceNote=''; await this.openHistory(this.history.id,this.history.name); await this.refreshLedgers(); }
+        else this.notify(d.message||"Couldn't add that.",'error');
+      }catch(e){ this.notify('Network error.','error'); }
+    },
 
-            return rows;
-        },
+    async deleteCurrentWeek(){
+      if(!this.selectedWeek||!confirm(`Delete every row for "${this.selectedWeek}"? This can't be undone.`)) return;
+      try{ const res=await this.post('/api/delete-week',{week_date:this.selectedWeek}); const d=await res.json();
+        if(res.ok&&d.status==='success'){ this.notify(`Deleted ${d.deleted_rows} rows.`,'success'); this.weeks=this.weeks.filter(w=>w!==this.selectedWeek); const nx=this.weeks[0]||''; this.selectedWeek=nx; if(nx) await this.loadWeek(nx); else this.ledgers=[]; }
+        else this.notify(d.message||'Delete failed.','error');
+      }catch(e){ this.notify('Network error.','error'); }
+    },
 
-        get totalWeek() {
-            return this.ledgers.reduce((sum, r) => sum + Number(r.amount_owed_usd), 0);
-        },
-        get totalPaid() {
-            return this.ledgers.filter(r => this.isPaid(r.status))
-                .reduce((sum, r) => sum + Number(r.amount_owed_usd), 0);
-        },
-        get totalUnpaid() {
-            return this.totalWeek - this.totalPaid;
-        },
-        get selectedTotal() {
-            return this.ledgers.filter(r => this.selectedIds.includes(r.id))
-                .reduce((sum, r) => sum + Number(r.amount_owed_usd), 0);
-        },
+    toggleTeamMember(n,on){ if(on){ if(!this.teamModal.members.includes(n)) this.teamModal.members.push(n);} else this.teamModal.members=this.teamModal.members.filter(m=>m!==n); },
+    async submitCreateTeam(){
+      const name=this.teamModal.name.trim(); if(!name){ this.notify('Give the team a name.','error'); return; } if(!this.teamModal.members.length){ this.notify('Pick at least one member.','error'); return; }
+      try{ const res=await this.post('/api/teams',{team_name:name,contractor_names:this.teamModal.members}); const d=await res.json();
+        if(res.ok&&d.status==='success'){ const ex=this.teams.find(t=>t.id===d.team_id); if(ex) ex.members=Array.from(new Set([...ex.members,...this.teamModal.members])).sort(); else this.teams.push({id:d.team_id,name,members:[...this.teamModal.members].sort(),pendingAdd:''}); this.notify('Team saved.','success'); this.teamModal={open:false,name:'',members:[]}; }
+        else this.notify(d.message||"Couldn't save the team.",'error');
+      }catch(e){ this.notify('Network error.','error'); }
+    },
+    async addTeamMember(team){ const n=team.pendingAdd; if(!n) return;
+      try{ const res=await this.post('/api/teams/add-member',{team_id:team.id,contractor_name:n}); const d=await res.json();
+        if(res.ok&&d.status==='success'){ if(!team.members.includes(n)){team.members.push(n);team.members.sort();} team.pendingAdd=''; this.notify(`Added ${n} to ${team.name}.`,'success'); } else this.notify(d.message||"Couldn't add them.",'error');
+      }catch(e){ this.notify('Network error.','error'); } },
+    async removeTeamMember(team,n){ if(!confirm(`Remove ${n} from ${team.name}?`)) return;
+      try{ const res=await this.post('/api/teams/remove-member',{team_id:team.id,contractor_name:n}); const d=await res.json();
+        if(res.ok&&d.status==='success'){ team.members=team.members.filter(m=>m!==n); this.notify(`Removed ${n}.`,'success'); } else this.notify(d.message||"Couldn't remove them.",'error');
+      }catch(e){ this.notify('Network error.','error'); } },
+    async deleteTeam(team){ if(!confirm(`Delete team "${team.name}"? Contractors are kept; only the grouping goes.`)) return;
+      try{ const res=await this.post('/api/delete-team',{team_id:team.id}); const d=await res.json();
+        if(res.ok&&d.status==='success'){ this.teams=this.teams.filter(t=>t.id!==team.id); if(this.filters.team===team.name) this.filters.team=''; this.notify(`Deleted "${team.name}".`,'success'); } else this.notify(d.message||"Couldn't delete it.",'error');
+      }catch(e){ this.notify('Network error.','error'); } },
 
-        setSort(key) {
-            if (this.sortKey === key) {
-                this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc';
-            } else {
-                this.sortKey = key;
-                this.sortDir = 'asc';
-            }
-        },
-        sortArrow(key) {
-            if (this.sortKey !== key) return '';
-            return this.sortDir === 'asc' ? '▲' : '▼';
-        },
-        clearFilters() {
-            this.filters = { search: '', status: 'all', team: '' };
-        },
-        toggleTeamFilter(teamName) {
-            this.filters.team = this.filters.team === teamName ? '' : teamName;
-        },
-
-        // ---------- selection ----------
-        toggleSelect(id, checked) {
-            if (checked) {
-                if (!this.selectedIds.includes(id)) this.selectedIds.push(id);
-            } else {
-                this.selectedIds = this.selectedIds.filter(x => x !== id);
-            }
-        },
-        selectAll(checked) {
-            if (checked) {
-                const ids = this.filteredLedgers.filter(r => !this.isPaid(r.status)).map(r => r.id);
-                this.selectedIds = Array.from(new Set([...this.selectedIds, ...ids]));
-            } else {
-                this.selectedIds = [];
-            }
-        },
-
-        explorerUrl(symbol, hash) {
-            if (!hash) return '#';
-            const s = (symbol || '').toUpperCase();
-            if (s === 'ETH' || s === 'USDT' || s === 'USDC' || s === 'DAI') return `https://etherscan.io/tx/${hash}`;
-            if (s === 'BTC') return `https://blockstream.info/tx/${hash}`;
-            if (s === 'LTC') return `https://blockchair.com/litecoin/transaction/${hash}`;
-            return '#';
-        },
-
-        // ---------- data refresh (no full page reload) ----------
-        async loadWeek(weekDate) {
-            try {
-                const res = await fetch(`/api/ledgers?week_date=${encodeURIComponent(weekDate)}`);
-                const data = await res.json();
-                if (data.status === 'success') {
-                    this.ledgers = data.ledgers;
-                    this.selectedWeek = data.week_date || weekDate;
-                    this.selectedIds = [];
-                    history.replaceState(null, '', `/?selected_week=${encodeURIComponent(this.selectedWeek)}`);
-                }
-            } catch (e) {
-                this.notify('Failed to load week data.', 'error');
-            }
-        },
-        async refreshLedgers() {
-            await this.loadWeek(this.selectedWeek);
-        },
-
-        // ---------- Monday–Sunday week picker ----------
-        openCalendar(e) {
-            // showPicker() only exists in Chromium-based browsers and must
-            // be called from a real user gesture; hovering counts in
-            // Chrome/Edge but not everywhere, so this is a nice-to-have —
-            // clicking the field always opens the native calendar as a
-            // fallback regardless of browser.
-            try {
-                if (e.target.showPicker) e.target.showPicker();
-            } catch (err) { /* ignore — click still works */ }
-        },
-        onPickWeek() {
-            if (!this.upload.pickedDate) { this.upload.weekDate = ''; return; }
-
-            const [y, m, d] = this.upload.pickedDate.split('-').map(Number);
-            const picked = new Date(y, m - 1, d); // local time, avoids UTC day-shift bugs
-
-            const dow = picked.getDay(); // 0 = Sun … 6 = Sat
-            const diffToMonday = dow === 0 ? -6 : 1 - dow;
-            const monday = new Date(picked);
-            monday.setDate(picked.getDate() + diffToMonday);
-            const sunday = new Date(monday);
-            sunday.setDate(monday.getDate() + 6);
-
-            const fmt = (dt, withYear) => dt.toLocaleDateString('en-US', {
-                month: 'short', day: 'numeric', year: withYear ? 'numeric' : undefined
-            });
-
-            this.upload.weekDate = monday.getMonth() === sunday.getMonth()
-                ? `${fmt(monday)} - ${sunday.getDate()}, ${sunday.getFullYear()}`
-                : `${fmt(monday)} - ${fmt(sunday, true)}`;
-        },
-
-        // ---------- upload ----------
-        handleFileSelect(e) {
-            const file = e.target.files[0];
-            this.setUploadFile(file);
-        },
-        handleDrop(e) {
-            this.upload.dragOver = false;
-            const file = e.dataTransfer.files[0];
-            if (file) this.setUploadFile(file);
-        },
-        setUploadFile(file) {
-            if (!file || !file.type.startsWith('image/')) {
-                this.notify('Please choose an image file.', 'error');
-                return;
-            }
-            this.upload.file = file;
-            this.upload.fileName = file.name;
-            const reader = new FileReader();
-            reader.onload = (ev) => { this.upload.previewSrc = ev.target.result; };
-            reader.readAsDataURL(file);
-        },
-        async submitUpload() {
-            if (!this.upload.file || !this.upload.weekDate.trim()) {
-                this.notify('Please select a file and specify the week date.', 'error');
-                return;
-            }
-            const formData = new FormData();
-            formData.append('file', this.upload.file);
-            formData.append('week_date', this.upload.weekDate.trim());
-            formData.append('overwrite', this.upload.overwrite);
-
-            this.upload.busy = true;
-            try {
-                const res = await fetch('/api/upload', { method: 'POST', body: formData });
-                const data = await res.json();
-
-                if (res.ok && data.status === 'success') {
-                    this.notify(`Extracted ${data.extracted_count} ledger records.`, 'success');
-                    if (!this.weeks.includes(data.week_date)) this.weeks.unshift(data.week_date);
-                    await this.loadWeek(data.week_date);
-                    this.resetUpload();
-                } else if (data.status === 'approval_required') {
-                    this.openApprovalModal(data);
-                } else {
-                    this.notify(data.message || 'Failed to parse image.', 'error');
-                }
-            } catch (e) {
-                this.notify('Server or network error uploading image.', 'error');
-            } finally {
-                this.upload.busy = false;
-            }
-        },
-        resetUpload() {
-            this.upload.file = null;
-            this.upload.fileName = '';
-            this.upload.previewSrc = null;
-            this.upload.pickedDate = '';
-            this.upload.weekDate = '';
-            this.upload.overwrite = false;
-        },
-        openApprovalModal(data) {
-            this.approvalModal = {
-                open: true,
-                weekDate: data.week_date,
-                overwrite: data.overwrite,
-                records: data.records,
-                unknownContractors: data.unknown_contractors,
-                existingContractors: data.existing_contractors,
-                mappings: {},
-            };
-        },
-        async submitConfirmedUpload() {
-            const payload = {
-                week_date: this.approvalModal.weekDate,
-                records: this.approvalModal.records,
-                overwrite: this.approvalModal.overwrite,
-                mappings: this.approvalModal.mappings,
-            };
-            try {
-                const res = await fetch('/api/confirm-upload', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-                });
-                const data = await res.json();
-                if (res.ok && data.status === 'success') {
-                    this.approvalModal.open = false;
-                    this.notify(`Imported ${data.extracted_count} ledger records.`, 'success');
-                    if (!this.weeks.includes(data.week_date)) this.weeks.unshift(data.week_date);
-                    await this.loadWeek(data.week_date);
-                    this.resetUpload();
-                } else {
-                    this.notify(data.message || 'Confirmation failed.', 'error');
-                }
-            } catch (e) {
-                this.notify('Failed to send upload confirmation.', 'error');
-            }
-        },
-
-        // ---------- crypto reconciliation ----------
-        debouncedRefreshEstimate() {
-            // Selecting several contractors fires this watcher once per
-            // checkbox click. Without debouncing, ticking 5 boxes made 5
-            // rapid CoinGecko calls before you'd even clicked "Verify" —
-            // burning through the same tight rate-limit budget that the
-            // actual reconciliation lookup needs. Wait for clicking to
-            // pause before actually fetching.
-            clearTimeout(this._estimateDebounce);
-            this._estimateDebounce = setTimeout(() => this.refreshEstimate(), 600);
-        },
-        async refreshEstimate() {
-            if (!this.selectedIds.length) { this.estimate = { amount: null, price: null, priceSymbol: null, fetchedAt: 0 }; return; }
-
-            // Reuse a price fetched in the last 30s for the same coin
-            // instead of re-hitting CoinGecko — this is a rough estimate
-            // shown before sending, not the reconciliation price, so a
-            // few-seconds-stale number is a fine trade for far fewer calls.
-            const isFresh = this.estimate.priceSymbol === this.crypto.symbol
-                && this.estimate.price
-                && (Date.now() - this.estimate.fetchedAt) < 30000;
-            if (isFresh) {
-                this.estimate.amount = (this.selectedTotal / this.estimate.price).toFixed(6);
-                return;
-            }
-
-            try {
-                const res = await fetch(`/api/live-price?symbol=${this.crypto.symbol}`);
-                const data = await res.json();
-                if (data.status === 'success') {
-                    this.estimate.price = data.price_usd;
-                    this.estimate.priceSymbol = this.crypto.symbol;
-                    this.estimate.fetchedAt = Date.now();
-                    this.estimate.amount = (this.selectedTotal / data.price_usd).toFixed(6);
-                }
-            } catch (e) { /* silent — estimate is best-effort */ }
-        },
-        async reconcileCrypto() {
-            if (!this.selectedIds.length) { this.notify('Select at least one line item first.', 'error'); return; }
-            if (!this.crypto.txInput.trim()) { this.notify('Paste a transaction hash or link first.', 'error'); return; }
-
-            this.crypto.busy = true;
-            try {
-                const res = await this.fetchWithTimeout('/api/reconcile-crypto', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ledger_ids: this.selectedIds, tx_id: this.crypto.txInput.trim(), symbol: this.crypto.symbol })
-                });
-                const data = await res.json();
-
-                if (data.symbol_auto_corrected && data.symbol_used) {
-                    // We detected the coin from the pasted link itself and
-                    // it disagreed with the dropdown — sync the dropdown so
-                    // it's not silently out of sync with what was actually
-                    // checked, and say so explicitly rather than acting on
-                    // a different coin than what's visibly selected.
-                    this.crypto.symbol = data.symbol_used;
-                    this.notify(`Detected this as a ${data.symbol_used} transaction from the link and checked it accordingly.`, 'info');
-                }
-
-                if (res.ok && data.status === 'matched') {
-                    this.notify(
-                        `Match confirmed — $${data.received_usd} received (${data.confirmations} confirmation${data.confirmations === 1 ? '' : 's'}). Marked PAID as of ${data.paid_at_est} (when it was sent).`,
-                        'success'
-                    );
-                    this.crypto.txInput = '';
-                    await this.refreshLedgers();
-                } else if (data.status === 'mismatch') {
-                    // Don't just dead-end here — offer an explicit override
-                    // path. This matters most for underpayments (a few cents
-                    // short from network fees, a typo'd amount, etc.) where
-                    // blocking the whole payment from ever being recorded
-                    // would be worse than letting someone consciously accept
-                    // the shortfall.
-                    this.mismatchModal = {
-                        open: true,
-                        busy: false,
-                        ledgerIds: [...this.selectedIds],
-                        txInput: this.crypto.txInput.trim(),
-                        symbol: data.symbol_used || this.crypto.symbol,
-                        totalOwed: data.total_owed,
-                        receivedUsd: data.received_usd,
-                        difference: data.difference,
-                        note: '',
-                    };
-                } else {
-                    this.notify(data.message || 'Verification failed.', 'error');
-                }
-            } catch (e) {
-                if (e.name === 'AbortError') {
-                    this.notify('Verification timed out — the blockchain API may be unreachable right now. Try again in a moment.', 'error');
-                } else {
-                    this.notify('Network error connecting to API.', 'error');
-                }
-            } finally {
-                this.crypto.busy = false;
-            }
-        },
-
-        async submitOverride() {
-            this.mismatchModal.busy = true;
-            try {
-                const res = await this.fetchWithTimeout('/api/reconcile-crypto', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        ledger_ids: this.mismatchModal.ledgerIds,
-                        tx_id: this.mismatchModal.txInput,
-                        symbol: this.mismatchModal.symbol,
-                        override: true,
-                        override_note: this.mismatchModal.note,
-                    })
-                });
-                const data = await res.json();
-
-                if (res.ok && data.status === 'matched') {
-                    this.notify(
-                        `Marked PAID with override — $${data.received_usd} received of $${data.total_owed} owed, as of ${data.paid_at_est}.`,
-                        'success'
-                    );
-                    this.mismatchModal.open = false;
-                    this.crypto.txInput = '';
-                    await this.refreshLedgers();
-                } else {
-                    this.notify(data.message || 'Override failed.', 'error');
-                }
-            } catch (e) {
-                if (e.name === 'AbortError') {
-                    this.notify('Override timed out — the blockchain API may be unreachable right now. Try again in a moment.', 'error');
-                } else {
-                    this.notify('Network error connecting to API.', 'error');
-                }
-            } finally {
-                this.mismatchModal.busy = false;
-            }
-        },
-
-        // ---------- manual payment ----------
-        async markPaidManual() {
-            if (!this.selectedIds.length) { this.notify('Select at least one line item first.', 'error'); return; }
-            this.manual.busy = true;
-            try {
-                const res = await fetch('/api/mark-paid-manual', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ledger_ids: this.selectedIds, notes: this.manual.notes })
-                });
-                if (res.ok) {
-                    this.notify('Marked as manually paid.', 'success');
-                    this.manual.notes = '';
-                    await this.refreshLedgers();
-                } else {
-                    const data = await res.json();
-                    this.notify(data.message || 'Failed to update records.', 'error');
-                }
-            } catch (e) {
-                this.notify('Network error.', 'error');
-            } finally {
-                this.manual.busy = false;
-            }
-        },
-
-        // ---------- week deletion ----------
-        async deleteCurrentWeek() {
-            if (!this.selectedWeek) return;
-            if (!confirm(`Delete all ledger entries for week "${this.selectedWeek}"? This can't be undone.`)) return;
-            try {
-                const res = await fetch('/api/delete-week', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ week_date: this.selectedWeek })
-                });
-                const data = await res.json();
-                if (res.ok && data.status === 'success') {
-                    this.notify(`Deleted ${data.deleted_rows} ledger entries.`, 'success');
-                    this.weeks = this.weeks.filter(w => w !== this.selectedWeek);
-                    const next = this.weeks[0] || '';
-                    this.selectedWeek = next;
-                    if (next) { await this.loadWeek(next); } else { this.ledgers = []; }
-                } else {
-                    this.notify(data.message || 'Delete failed.', 'error');
-                }
-            } catch (e) {
-                this.notify('Failed to delete week.', 'error');
-            }
-        },
-
-        // ---------- teams ----------
-        toggleTeamMember(name, checked) {
-            if (checked) {
-                if (!this.teamModal.members.includes(name)) this.teamModal.members.push(name);
-            } else {
-                this.teamModal.members = this.teamModal.members.filter(m => m !== name);
-            }
-        },
-        async submitCreateTeam() {
-            if (!this.teamModal.name.trim()) { this.notify('Please provide a team name.', 'error'); return; }
-            if (!this.teamModal.members.length) { this.notify('Please select at least one contractor.', 'error'); return; }
-            const teamName = this.teamModal.name.trim();
-            try {
-                const res = await fetch('/api/teams', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ team_name: teamName, contractor_names: this.teamModal.members })
-                });
-                const data = await res.json();
-                if (res.ok && data.status === 'success') {
-                    const existing = this.teams.find(t => t.id === data.team_id);
-                    if (existing) {
-                        existing.members = Array.from(new Set([...existing.members, ...this.teamModal.members])).sort();
-                    } else {
-                        this.teams.push({ id: data.team_id, name: teamName, members: [...this.teamModal.members].sort(), pendingAdd: '' });
-                    }
-                    this.notify('Team created.', 'success');
-                    this.teamModal = { open: false, name: '', members: [] };
-                } else {
-                    this.notify(data.message || 'Failed to create team.', 'error');
-                }
-            } catch (e) {
-                this.notify('Error connecting to server.', 'error');
-            }
-        },
-
-        // ---------- team editing (add/remove members, delete team) ----------
-        async addTeamMember(team) {
-            const name = team.pendingAdd;
-            if (!name) return;
-            try {
-                const res = await fetch('/api/teams/add-member', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ team_id: team.id, contractor_name: name })
-                });
-                const data = await res.json();
-                if (res.ok && data.status === 'success') {
-                    if (!team.members.includes(name)) {
-                        team.members.push(name);
-                        team.members.sort();
-                    }
-                    team.pendingAdd = '';
-                    this.notify(`Added ${name} to ${team.name}.`, 'success');
-                } else {
-                    this.notify(data.message || 'Failed to add member.', 'error');
-                }
-            } catch (e) {
-                this.notify('Network error adding team member.', 'error');
-            }
-        },
-        async removeTeamMember(team, name) {
-            if (!confirm(`Remove ${name} from ${team.name}?`)) return;
-            try {
-                const res = await fetch('/api/teams/remove-member', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ team_id: team.id, contractor_name: name })
-                });
-                const data = await res.json();
-                if (res.ok && data.status === 'success') {
-                    team.members = team.members.filter(m => m !== name);
-                    this.notify(`Removed ${name} from ${team.name}.`, 'success');
-                } else {
-                    this.notify(data.message || 'Failed to remove member.', 'error');
-                }
-            } catch (e) {
-                this.notify('Network error removing team member.', 'error');
-            }
-        },
-        async deleteTeam(team) {
-            if (!confirm(`Delete team "${team.name}"? Contractors themselves are kept — this only removes the team grouping. This can't be undone.`)) return;
-            try {
-                const res = await fetch('/api/delete-team', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ team_id: team.id })
-                });
-                const data = await res.json();
-                if (res.ok && data.status === 'success') {
-                    this.teams = this.teams.filter(t => t.id !== team.id);
-                    if (this.filters.team === team.name) this.filters.team = '';
-                    this.notify(`Deleted team "${team.name}".`, 'success');
-                } else {
-                    this.notify(data.message || 'Failed to delete team.', 'error');
-                }
-            } catch (e) {
-                this.notify('Network error deleting team.', 'error');
-            }
-        },
-
-        // ---------- contractors ----------
-        async deleteContractor(id, name) {
-            if (!confirm(`Delete contractor "${name}" and all associated ledger history? This can't be undone.`)) return;
-            try {
-                const res = await fetch('/api/delete-contractor', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ contractor_id: id })
-                });
-                if (res.ok) {
-                    this.contractors = this.contractors.filter(c => c.id !== id);
-                    this.ledgers = this.ledgers.filter(r => r.contractor_id !== id);
-                    this.notify('Contractor deleted.', 'success');
-                } else {
-                    this.notify('Failed to delete contractor.', 'error');
-                }
-            } catch (e) {
-                this.notify('Error deleting contractor.', 'error');
-            }
-        },
-        async openHistory(contractorId, name) {
-            this.historyModal = { open: true, loading: true, name, totalOwed: 0, totalPaid: 0, history: [] };
-            try {
-                const res = await fetch(`/api/contractor-history/${contractorId}`);
-                const data = await res.json();
-                if (data.status === 'success') {
-                    this.historyModal = {
-                        open: true, loading: false, name: data.contractor,
-                        totalOwed: data.total_owed, totalPaid: data.total_paid, history: data.history
-                    };
-                } else {
-                    this.notify(data.message || 'Failed to load history.', 'error');
-                    this.historyModal.open = false;
-                }
-            } catch (e) {
-                this.notify('Failed to load contractor history.', 'error');
-                this.historyModal.open = false;
-            }
-        },
-    };
+    async deleteContractor(id,name){ if(!confirm(`Delete "${name}" and all their ledger history? This can't be undone.`)) return;
+      try{ const res=await this.post('/api/delete-contractor',{contractor_id:id});
+        if(res.ok){ this.contractors=this.contractors.filter(c=>c.id!==id); this.ledgers=this.ledgers.filter(r=>r.contractor_id!==id); this.notify('Contractor deleted.','success'); } else this.notify("Couldn't delete.",'error');
+      }catch(e){ this.notify('Network error.','error'); } },
+    async openHistory(id,name){
+      this.history={...this.history,open:true,loading:true,id,name,rows:[],credits:[]};
+      try{ const res=await fetch(`/api/contractor-history/${id}`); const d=await res.json();
+        if(d.status==='success'){ this.history={...this.history,loading:false,name:d.contractor,id:d.contractor_id,totalOwed:d.total_owed,totalPaid:d.total_paid,creditBalance:d.credit_balance,rows:d.history,credits:d.credit_history}; }
+        else { this.notify(d.message||"Couldn't load history.",'error'); this.history.open=false; }
+      }catch(e){ this.notify("Couldn't load history.",'error'); this.history.open=false; }
+    },
+  };
 }
 </script>
 
@@ -1436,6 +796,5 @@ function app() {
 <script type="application/json" id="contractors-data">{{ contractors_json | safe }}</script>
 <script type="application/json" id="weeks-data">{{ weeks_json | safe }}</script>
 <div id="selected-week-data" style="display:none">{{ selected_week }}</div>
-
 </body>
 </html>
