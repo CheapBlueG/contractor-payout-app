@@ -197,7 +197,7 @@ def _eth_rpc(url: str) -> dict:
     backoff_seconds = 0.4
 
     for attempt in range(max_attempts):
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=8)
         response.raise_for_status()
         data = response.json()
 
@@ -422,28 +422,36 @@ def verify_erc20_tx(tx_hash: str, token_symbol: str) -> dict:
     }
 
 
+class ProviderUnavailable(Exception):
+    """A blockchain data provider couldn't be reached, timed out, or is
+    rate-limiting us. This is NOT a definitive answer about the transaction
+    itself — callers should move on to the next provider rather than give
+    up or (worse) report it as "transaction not found". Definitive answers
+    (not found, unconfirmed, sent to the wrong address) are raised as plain
+    ValueError so they stop the chain immediately."""
+
+
+# All outbound blockchain-API timeouts here are deliberately short (6s). A
+# connection that's being silently dropped (packets black-holed rather
+# than actively refused) otherwise waits out the full timeout on EVERY
+# call, and one verification can involve half a dozen of them — which is
+# how a request ends up feeling "stuck" with no feedback. Failing each
+# provider fast and moving on keeps the whole thing bounded.
+_PROVIDER_TIMEOUT = 6
+
 _BTC_ESPLORA_HOSTS = ["https://blockstream.info/api", "https://mempool.space/api"]
 
 
 def _esplora_get(path: str):
     """GETs `path` from every known Esplora-compatible host in order
-    (Blockstream, mempool.space — they run the identical open-source API,
-    so responses are interchangeable) and returns the first success.
-    Raises ValueError only if every host fails, and the message includes
-    EVERY host's failure reason — not just the last one — so a genuine
-    outage/rate-limit on the first host isn't silently overwritten by
-    whatever the second host says.
-
-    No internal retry-with-delay here on purpose: if a connection is
-    genuinely being silently dropped (packets black-holed rather than
-    actively refused), retrying a few hundred ms later doesn't help and
-    just makes a stuck-feeling request take even longer. Fail fast per
-    host (6s) and let the person retry manually if needed — a clear,
-    bounded failure beats a long, silent hang."""
+    (Blockstream, mempool.space — same open-source API, interchangeable
+    responses) and returns the first success. Raises ProviderUnavailable
+    if every host fails, with EVERY host's reason in the message so a
+    rate-limit on the first isn't hidden behind whatever the second says."""
     errors = []
     for host in _BTC_ESPLORA_HOSTS:
         try:
-            response = requests.get(f"{host}{path}", timeout=6)
+            response = requests.get(f"{host}{path}", timeout=_PROVIDER_TIMEOUT)
             if response.status_code == 404:
                 return None, host  # definitive: this host confirms it doesn't exist
             if response.status_code == 429:
@@ -453,237 +461,235 @@ def _esplora_get(path: str):
             return response.json(), host
         except requests.RequestException as e:
             errors.append(f"{host}: {e}")
-    print(f"_esplora_get({path}) failed on every BTC host: {'; '.join(errors)}")
-    raise ValueError(f"Failed to communicate with any Bitcoin blockchain API. Tried: {'; '.join(errors)}")
+    print(f"_esplora_get({path}) failed on every Esplora host: {'; '.join(errors)}")
+    raise ProviderUnavailable("; ".join(errors))
 
 
-def verify_btc_tx(tx_hash: str) -> dict:
-    """Verifies a Bitcoin transaction via Esplora-compatible APIs
-    (Blockstream, with mempool.space as a fallback if Blockstream is
-    rate-limiting or unreachable — both run the same software)."""
-    target_addr = get_btc_address().lower()
-    clean_tx = tx_hash.strip().lower()
-    if not _HEX64_RE.fullmatch(clean_tx):
-        raise ValueError("Invalid Bitcoin transaction hash (must be 64 hexadecimal characters).")
+def _parse_iso_utc(value):
+    """Parses the ISO-8601 timestamps these providers return (with or
+    without a trailing 'Z' / explicit offset) into unix seconds, or None."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+    except ValueError:
+        return None
 
-    data, used_host = _esplora_get(f"/tx/{clean_tx}")
+
+def _refuse_to_guess_time(coin_label: str):
+    # We will NOT silently price/log a payment against "now" — an old,
+    # replayed txid would then look like it was just sent, which is exactly
+    # the wrong direction to be wrong in.
+    return ValueError(
+        f"This {coin_label} transaction is confirmed, but the exact time it was "
+        f"sent couldn't be determined from the block explorer. Refusing to "
+        f"guess — try verifying again in a moment."
+    )
+
+
+def _verify_via_esplora(clean_tx: str, target_addr: str, coin_label: str, explorer_url: str) -> dict:
+    """Esplora-compatible verification (Blockstream / mempool.space)."""
+    data, _ = _esplora_get(f"/tx/{clean_tx}")
     if data is None:
-        raise ValueError("Bitcoin transaction not found.")
+        raise ValueError(f"{coin_label} transaction not found.")
 
-    vouts = data.get("vout", [])
-    matched_satoshis = sum(
-        vout.get("value", 0) for vout in vouts
+    matched = sum(
+        vout.get("value", 0) for vout in data.get("vout", [])
         if str(vout.get("scriptpubkey_address", "")).strip().lower() == target_addr
     )
-    if matched_satoshis == 0:
-        raise ValueError(f"No outputs found sent to target address '{get_btc_address()}' in this transaction.")
+    if matched == 0:
+        raise ValueError(f"No outputs found sent to the designated {coin_label} address in this transaction.")
 
     status = data.get("status", {})
     if not status.get("confirmed"):
         raise ValueError(
-            "This Bitcoin transaction hasn't confirmed yet. Wait for at least one "
-            "confirmation and try again — unconfirmed transactions can still be "
-            "replaced or dropped."
+            f"This {coin_label} transaction hasn't confirmed yet. Wait for at least one "
+            f"confirmation and try again — unconfirmed transactions can still be "
+            f"replaced or dropped."
         )
 
     timestamp = status.get("block_time")
-    confirmations = 0
     block_height = status.get("block_height")
     block_hash = status.get("block_hash")
 
     if timestamp is None and block_hash:
-        # The tx status almost always includes block_time, but if it's ever
-        # missing, the block endpoint always has "timestamp".
         try:
             block_data, _ = _esplora_get(f"/block/{block_hash}")
             if block_data:
                 timestamp = block_data.get("timestamp")
-        except ValueError as e:
-            print(f"BTC block-time fallback failed for block {block_hash}: {e}")
+        except ProviderUnavailable as e:
+            print(f"{coin_label} block-time fallback failed for block {block_hash}: {e}")
 
+    confirmations = 1
     if block_height:
         # /blocks/tip/height returns plain text (a bare number), not JSON,
-        # so this can't go through _esplora_get — fetch it directly instead.
-        confirmations = 1
+        # so it can't go through _esplora_get — fetch it directly.
         for host in _BTC_ESPLORA_HOSTS:
             try:
-                tip_resp = requests.get(f"{host}/blocks/tip/height", timeout=6)
+                tip_resp = requests.get(f"{host}/blocks/tip/height", timeout=_PROVIDER_TIMEOUT)
                 tip_resp.raise_for_status()
-                confirmations = max(0, int(tip_resp.text) - block_height + 1)
+                confirmations = max(1, int(tip_resp.text) - block_height + 1)
                 break
             except (requests.RequestException, ValueError):
                 continue
 
     if timestamp is None:
-        # We will NOT silently price/log this against "now" — an old,
-        # replayed txid would then look like it was just sent, which is
-        # exactly the wrong direction to be wrong in.
-        raise ValueError(
-            "This Bitcoin transaction is confirmed, but the exact time it was sent "
-            "couldn't be determined from the block explorer. Refusing to guess — "
-            "try verifying again in a moment."
-        )
+        raise _refuse_to_guess_time(coin_label)
 
-    return {
-        "amount": matched_satoshis / 1e8,
-        "timestamp": timestamp,
-        "confirmations": confirmations,
-        "explorer_url": f"https://blockstream.info/tx/{clean_tx}",
-    }
+    return {"amount": matched / 1e8, "timestamp": timestamp, "confirmations": confirmations, "explorer_url": explorer_url}
+
+
+def _verify_via_blockcypher(coin_path: str, clean_tx: str, target_addr: str, coin_label: str, explorer_url: str) -> dict:
+    """BlockCypher verification. `coin_path` is 'btc' or 'ltc' — the API is
+    otherwise identical between them. The optional BlockCypher token is
+    account-level, so the one configured for LTC works for BTC too."""
+    def with_token(url):
+        return f"{url}?token={LTC_API_KEY}" if LTC_API_KEY else url
+
+    try:
+        response = requests.get(with_token(f"https://api.blockcypher.com/v1/{coin_path}/main/txs/{clean_tx}"), timeout=_PROVIDER_TIMEOUT)
+    except requests.RequestException as e:
+        raise ProviderUnavailable(f"BlockCypher ({coin_path}): {e}")
+    if response.status_code == 404:
+        raise ValueError(f"{coin_label} transaction not found.")
+    if response.status_code != 200:
+        raise ProviderUnavailable(f"BlockCypher ({coin_path}): HTTP {response.status_code}")
+
+    data = response.json()
+    outputs = data.get("outputs", [])
+    matched = sum(
+        out.get("value", 0) for out in outputs
+        if any(str(addr).strip().lower() == target_addr for addr in out.get("addresses", []))
+    )
+    if matched == 0:
+        raise ValueError(f"No outputs found sent to the designated {coin_label} address in this transaction.")
+
+    confirmations = data.get("confirmations", 0)
+    if confirmations < 1:
+        raise ValueError(f"This {coin_label} transaction hasn't confirmed yet. Wait for at least one confirmation and try again.")
+
+    timestamp = _parse_iso_utc(data.get("confirmed"))
+    if timestamp is None:
+        # BlockCypher's "confirmed" field is occasionally absent even when
+        # confirmations > 0. The block itself always has a "time" field.
+        block_height = data.get("block_height")
+        if block_height:
+            try:
+                block_resp = requests.get(with_token(f"https://api.blockcypher.com/v1/{coin_path}/main/blocks/{block_height}"), timeout=_PROVIDER_TIMEOUT)
+                block_resp.raise_for_status()
+                timestamp = _parse_iso_utc(block_resp.json().get("time"))
+            except Exception as e:
+                print(f"{coin_label} block-time fallback (BlockCypher block {block_height}) failed: {e}")
+
+    if timestamp is None:
+        raise _refuse_to_guess_time(coin_label)
+
+    return {"amount": matched / 1e8, "timestamp": timestamp, "confirmations": confirmations, "explorer_url": explorer_url}
+
+
+def _verify_via_blockchair(chain: str, clean_tx: str, target_addr: str, coin_label: str, explorer_url: str) -> dict:
+    """Blockchair verification. `chain` is 'bitcoin' or 'litecoin'."""
+    try:
+        response = requests.get(f"https://api.blockchair.com/{chain}/dashboards/transaction/{clean_tx}", timeout=_PROVIDER_TIMEOUT)
+        if response.status_code == 429:
+            raise ProviderUnavailable(f"Blockchair ({chain}): rate-limited (429)")
+        response.raise_for_status()
+        data = response.json()
+    except requests.RequestException as e:
+        raise ProviderUnavailable(f"Blockchair ({chain}): {e}")
+
+    tx_data = data.get("data", {}).get(clean_tx, {})
+    if not tx_data:
+        raise ValueError(f"{coin_label} transaction not found.")
+
+    matched = sum(
+        out.get("value", 0) for out in tx_data.get("outputs", [])
+        if str(out.get("recipient", "")).strip().lower() == target_addr
+    )
+    if matched == 0:
+        raise ValueError(f"No outputs found sent to the designated {coin_label} address in this transaction.")
+
+    tx_info = tx_data.get("transaction", {})
+    block_id = tx_info.get("block_id")
+    if not block_id or block_id <= 0:
+        raise ValueError(f"This {coin_label} transaction hasn't confirmed yet. Wait for at least one confirmation and try again.")
+
+    timestamp = _parse_iso_utc(tx_info.get("time"))
+    if timestamp is None:
+        try:
+            block_resp = requests.get(f"https://api.blockchair.com/{chain}/dashboards/block/{block_id}", timeout=_PROVIDER_TIMEOUT)
+            block_resp.raise_for_status()
+            block_info = block_resp.json().get("data", {}).get(str(block_id), {}).get("block", {})
+            timestamp = _parse_iso_utc(block_info.get("time"))
+        except Exception as e:
+            print(f"{coin_label} block-time fallback (Blockchair block {block_id}) failed: {e}")
+
+    if timestamp is None:
+        raise _refuse_to_guess_time(coin_label)
+
+    # Blockchair includes the current chain height in the response context,
+    # which gives a real live confirmation count instead of a hardcoded 1.
+    best_height = data.get("context", {}).get("state")
+    confirmations = max(1, best_height - block_id + 1) if isinstance(best_height, int) else 1
+
+    return {"amount": matched / 1e8, "timestamp": timestamp, "confirmations": confirmations, "explorer_url": explorer_url}
+
+
+def _verify_utxo_tx(providers, clean_tx: str, coin_label: str) -> dict:
+    """Runs each (name, callable) provider in order. A ProviderUnavailable
+    means "couldn't reach it" -> try the next one. A ValueError is a
+    definitive answer about the transaction -> stop and report it. Only
+    if EVERY provider was unreachable do we give up, and the message then
+    lists exactly what each one said."""
+    unavailable = []
+    for name, fn in providers:
+        try:
+            return fn()
+        except ProviderUnavailable as e:
+            unavailable.append(f"{name}: {e}")
+    print(f"verify {coin_label} tx {clean_tx}: every provider unavailable: {' | '.join(unavailable)}")
+    raise ValueError(
+        f"Couldn't reach any {coin_label} blockchain data provider right now "
+        f"({len(unavailable)} tried). This is usually temporary — try again in a "
+        f"minute. Details are in the server log."
+    )
+
+
+def verify_btc_tx(tx_hash: str) -> dict:
+    """Verifies a Bitcoin transaction, trying Esplora (Blockstream +
+    mempool.space), then BlockCypher, then Blockchair. The latter two are
+    the same providers LTC verification has been using successfully from
+    this deployment, so they're proven reachable — unlike mempool.space,
+    which consistently fails with 'Network is unreachable' from here."""
+    target_addr = get_btc_address().lower()
+    clean_tx = tx_hash.strip().lower()
+    if not _HEX64_RE.fullmatch(clean_tx):
+        raise ValueError("Invalid Bitcoin transaction hash (must be 64 hexadecimal characters).")
+    explorer_url = f"https://blockstream.info/tx/{clean_tx}"
+
+    return _verify_utxo_tx([
+        ("Esplora", lambda: _verify_via_esplora(clean_tx, target_addr, "Bitcoin", explorer_url)),
+        ("BlockCypher", lambda: _verify_via_blockcypher("btc", clean_tx, target_addr, "Bitcoin", explorer_url)),
+        ("Blockchair", lambda: _verify_via_blockchair("bitcoin", clean_tx, target_addr, "Bitcoin", explorer_url)),
+    ], clean_tx, "Bitcoin")
 
 
 def verify_ltc_tx(tx_hash: str) -> dict:
-    """Verifies a Litecoin transaction, preferring BlockCypher and falling
-    back to Blockchair if that lookup fails or is rate-limited."""
+    """Verifies a Litecoin transaction via BlockCypher, then Blockchair."""
     target_addr = get_ltc_address().lower()
     clean_tx = tx_hash.strip().lower()
     if not _HEX64_RE.fullmatch(clean_tx):
         raise ValueError("Invalid Litecoin transaction hash (must be 64 hexadecimal characters).")
-
     explorer_url = f"https://blockchair.com/litecoin/transaction/{clean_tx}"
 
-    # Primary lookup: BlockCypher
-    url = f"https://api.blockcypher.com/v1/ltc/main/txs/{clean_tx}"
-    if LTC_API_KEY:
-        url += f"?token={LTC_API_KEY}"
+    return _verify_utxo_tx([
+        ("BlockCypher", lambda: _verify_via_blockcypher("ltc", clean_tx, target_addr, "Litecoin", explorer_url)),
+        ("Blockchair", lambda: _verify_via_blockchair("litecoin", clean_tx, target_addr, "Litecoin", explorer_url)),
+    ], clean_tx, "Litecoin")
 
-    try:
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            outputs = data.get("outputs", [])
-            matched_litoshis = sum(
-                out.get("value", 0) for out in outputs
-                if any(str(addr).strip().lower() == target_addr for addr in out.get("addresses", []))
-            )
-
-            if matched_litoshis > 0:
-                confirmations = data.get("confirmations", 0)
-                if confirmations < 1:
-                    raise ValueError(
-                        "This Litecoin transaction hasn't confirmed yet. Wait for at "
-                        "least one confirmation and try again."
-                    )
-                timestamp = None
-                confirmed_str = data.get("confirmed")
-                if confirmed_str:
-                    try:
-                        timestamp = int(
-                            datetime.fromisoformat(confirmed_str.replace("Z", "+00:00")).timestamp()
-                        )
-                    except ValueError:
-                        pass
-
-                if timestamp is None:
-                    # BlockCypher's "confirmed" field is occasionally absent
-                    # even when confirmations > 0. Fall back to the block
-                    # itself, which always has a "time" field.
-                    block_height = data.get("block_height")
-                    if block_height:
-                        try:
-                            block_url = f"https://api.blockcypher.com/v1/ltc/main/blocks/{block_height}"
-                            if LTC_API_KEY:
-                                block_url += f"?token={LTC_API_KEY}"
-                            block_resp = requests.get(block_url, timeout=10)
-                            block_resp.raise_for_status()
-                            block_time_str = block_resp.json().get("time")
-                            if block_time_str:
-                                timestamp = int(
-                                    datetime.fromisoformat(block_time_str.replace("Z", "+00:00")).timestamp()
-                                )
-                        except Exception as e:
-                            print(f"LTC block-time fallback (BlockCypher block {block_height}) failed: {e}")
-
-                if timestamp is None:
-                    # Don't guess. Logging this against "now" would make an
-                    # old, replayed txid look freshly sent.
-                    raise ValueError(
-                        "This Litecoin transaction is confirmed, but the exact time it "
-                        "was sent couldn't be determined. Refusing to guess — try "
-                        "verifying again in a moment."
-                    )
-
-                return {
-                    "amount": matched_litoshis / 1e8,
-                    "timestamp": timestamp,
-                    "confirmations": confirmations,
-                    "explorer_url": explorer_url,
-                }
-            elif outputs:
-                raise ValueError(f"No output found sent to address '{get_ltc_address()}' in this transaction.")
-    except ValueError:
-        raise
-    except Exception:
-        pass  # fall through to Blockchair
-
-    # Fallback lookup: Blockchair
-    fallback_url = f"https://api.blockchair.com/litecoin/dashboards/transaction/{clean_tx}"
-    try:
-        response = requests.get(fallback_url, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        tx_data = data.get("data", {}).get(clean_tx, {})
-        if not tx_data:
-            raise ValueError("Litecoin transaction not found on Blockchair.")
-
-        outputs = tx_data.get("outputs", [])
-        matched_litoshis = sum(
-            out.get("value", 0) for out in outputs
-            if str(out.get("recipient", "")).strip().lower() == target_addr
-        )
-        if matched_litoshis == 0:
-            raise ValueError(f"No output found sent to address '{get_ltc_address()}' in this transaction.")
-
-        tx_info = tx_data.get("transaction", {})
-        block_id = tx_info.get("block_id")
-        if not block_id or block_id <= 0:
-            raise ValueError(
-                "This Litecoin transaction hasn't confirmed yet. Wait for at least "
-                "one confirmation and try again."
-            )
-
-        timestamp = None
-        time_str = tx_info.get("time")
-        if time_str:
-            try:
-                timestamp = int(
-                    datetime.fromisoformat(time_str).replace(tzinfo=timezone.utc).timestamp()
-                )
-            except ValueError:
-                pass
-
-        if timestamp is None:
-            # Same principle as above: fall back to the block's own record
-            # rather than ever defaulting to "now".
-            try:
-                block_resp = requests.get(
-                    f"https://api.blockchair.com/litecoin/dashboards/block/{block_id}", timeout=10
-                )
-                block_resp.raise_for_status()
-                block_info = block_resp.json().get("data", {}).get(str(block_id), {}).get("block", {})
-                block_time_str = block_info.get("time")
-                if block_time_str:
-                    timestamp = int(
-                        datetime.fromisoformat(block_time_str).replace(tzinfo=timezone.utc).timestamp()
-                    )
-            except Exception as e:
-                print(f"LTC block-time fallback (Blockchair block {block_id}) failed: {e}")
-
-        if timestamp is None:
-            raise ValueError(
-                "This Litecoin transaction is confirmed, but the exact time it was "
-                "sent couldn't be determined. Refusing to guess — try verifying "
-                "again in a moment."
-            )
-
-        return {
-            "amount": matched_litoshis / 1e8,
-            "timestamp": timestamp,
-            "confirmations": 1,  # Blockchair doesn't give a live confirmation count here
-            "explorer_url": explorer_url,
-        }
-    except requests.RequestException as e:
-        raise ValueError(f"Failed to verify Litecoin transaction on Blockchair: {str(e)}")
 
 
 # --------------------------------------------------------------------------
@@ -724,7 +730,7 @@ def _binance_historical_price(symbol_upper: str, timestamp: int):
             f"https://api.binance.com/api/v3/klines?symbol={b_sym}&interval=1m"
             f"&startTime={start_ms}&endTime={end_ms}&limit=10"
         )
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=5)
         res = response.json()
         if isinstance(res, list) and res:
             # Each kline: [open_time_ms, open, high, low, close, ...]
@@ -752,7 +758,7 @@ def _kraken_historical_price(symbol_upper: str, timestamp: int):
     try:
         since = timestamp - 300
         url = f"https://api.kraken.com/0/public/OHLC?pair={pair}&interval=1&since={since}"
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=5)
         data = response.json()
         if data.get("error"):
             print(f"Kraken OHLC error for {symbol_upper}: {data['error']}")
@@ -789,7 +795,7 @@ def get_price_usd_at(symbol: str, timestamp: int) -> float:
             f"https://api.coingecko.com/api/v3/coins/{cg_id}/market_chart/range"
             f"?vs_currency=usd&from={from_ts}&to={to_ts}"
         )
-        res = requests.get(url, timeout=10)
+        res = requests.get(url, timeout=5)
         if res.status_code == 429:
             errors.append("CoinGecko range: rate-limited (429)")
         else:
@@ -807,7 +813,7 @@ def get_price_usd_at(symbol: str, timestamp: int) -> float:
     try:
         date_str = datetime.utcfromtimestamp(timestamp).strftime("%d-%m-%Y")
         url = f"https://api.coingecko.com/api/v3/coins/{cg_id}/history?date={date_str}"
-        res = requests.get(url, timeout=10)
+        res = requests.get(url, timeout=5)
         if res.status_code == 429:
             errors.append("CoinGecko history: rate-limited (429)")
         else:
