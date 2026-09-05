@@ -60,6 +60,43 @@ def init_db():
         );
         """)
 
+        # --- Additive migrations (safe to re-run on every startup) ---
+        # payment_method: how a row was settled — a coin/token symbol
+        # (BTC/LTC/ETH/USDT/USDC/DAI), a cash app (CASHAPP/VENMO/ZELLE/
+        # CASH/OTHER), or CREDIT when covered by a contractor's advance
+        # balance. crypto_symbol is kept for backward compatibility.
+        # amount_paid_usd: what was actually received for this row.
+        # credit_applied_usd: how much of an advance balance offset it.
+        cursor.execute("ALTER TABLE weekly_ledgers ADD COLUMN IF NOT EXISTS payment_method VARCHAR(30);")
+        cursor.execute("ALTER TABLE weekly_ledgers ADD COLUMN IF NOT EXISTS amount_paid_usd NUMERIC(12, 2);")
+        cursor.execute("ALTER TABLE weekly_ledgers ADD COLUMN IF NOT EXISTS credit_applied_usd NUMERIC(12, 2) DEFAULT 0;")
+        cursor.execute("UPDATE weekly_ledgers SET credit_applied_usd = 0 WHERE credit_applied_usd IS NULL;")
+        # Rows paid before payment_method existed: derive it from the coin.
+        cursor.execute("""
+        UPDATE weekly_ledgers SET payment_method = UPPER(crypto_symbol)
+        WHERE payment_method IS NULL AND crypto_symbol IS NOT NULL;
+        """)
+
+        # Advance credit: a contractor who overpays builds a balance that is
+        # drawn down against future weeks until it runs out.
+        cursor.execute("ALTER TABLE contractors ADD COLUMN IF NOT EXISTS credit_balance NUMERIC(12, 2) DEFAULT 0;")
+        cursor.execute("UPDATE contractors SET credit_balance = 0 WHERE credit_balance IS NULL;")
+
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS credit_transactions (
+            id SERIAL PRIMARY KEY,
+            contractor_id INTEGER REFERENCES contractors(id) ON DELETE CASCADE,
+            amount_usd NUMERIC(12, 2) NOT NULL,
+            reason TEXT,
+            ledger_id INTEGER REFERENCES weekly_ledgers(id) ON DELETE SET NULL,
+            created_at_est VARCHAR(100)
+        );
+        """)
+        cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_credit_transactions_contractor
+            ON credit_transactions (contractor_id);
+        """)
+
         # Indexes to keep the dashboard, filtering, and the duplicate-tx
         # check fast as the table grows. Not UNIQUE on crypto_tx_id on
         # purpose: a single transaction is allowed to pay several
