@@ -432,27 +432,27 @@ def _esplora_get(path: str):
     Raises ValueError only if every host fails, and the message includes
     EVERY host's failure reason — not just the last one — so a genuine
     outage/rate-limit on the first host isn't silently overwritten by
-    whatever the second host says."""
+    whatever the second host says.
+
+    No internal retry-with-delay here on purpose: if a connection is
+    genuinely being silently dropped (packets black-holed rather than
+    actively refused), retrying a few hundred ms later doesn't help and
+    just makes a stuck-feeling request take even longer. Fail fast per
+    host (6s) and let the person retry manually if needed — a clear,
+    bounded failure beats a long, silent hang."""
     errors = []
     for host in _BTC_ESPLORA_HOSTS:
-        # One retry per host for a transient network blip (DNS hiccup,
-        # momentary connection refusal) before writing that host off and
-        # moving to the next one.
-        for attempt in range(2):
-            try:
-                response = requests.get(f"{host}{path}", timeout=10)
-                if response.status_code == 404:
-                    return None, host  # definitive: this host confirms it doesn't exist
-                if response.status_code == 429:
-                    errors.append(f"{host}: rate-limited (429)")
-                    break  # retrying a rate-limit immediately won't help
-                response.raise_for_status()
-                return response.json(), host
-            except requests.RequestException as e:
-                if attempt == 0:
-                    time.sleep(0.5)
-                    continue
-                errors.append(f"{host}: {e}")
+        try:
+            response = requests.get(f"{host}{path}", timeout=6)
+            if response.status_code == 404:
+                return None, host  # definitive: this host confirms it doesn't exist
+            if response.status_code == 429:
+                errors.append(f"{host}: rate-limited (429)")
+                continue
+            response.raise_for_status()
+            return response.json(), host
+        except requests.RequestException as e:
+            errors.append(f"{host}: {e}")
     print(f"_esplora_get({path}) failed on every BTC host: {'; '.join(errors)}")
     raise ValueError(f"Failed to communicate with any Bitcoin blockchain API. Tried: {'; '.join(errors)}")
 
@@ -507,7 +507,7 @@ def verify_btc_tx(tx_hash: str) -> dict:
         confirmations = 1
         for host in _BTC_ESPLORA_HOSTS:
             try:
-                tip_resp = requests.get(f"{host}/blocks/tip/height", timeout=10)
+                tip_resp = requests.get(f"{host}/blocks/tip/height", timeout=6)
                 tip_resp.raise_for_status()
                 confirmations = max(0, int(tip_resp.text) - block_height + 1)
                 break
