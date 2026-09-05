@@ -412,7 +412,7 @@
                 <h2>Crypto Reconciliation</h2>
                 <div class="form-group">
                     <label for="cryptoSymbol">Cryptocurrency</label>
-                    <select id="cryptoSymbol" x-model="crypto.symbol" @change="refreshEstimate()">
+                    <select id="cryptoSymbol" x-model="crypto.symbol" @change="debouncedRefreshEstimate()">
                         <option value="LTC">Litecoin (LTC)</option>
                         <option value="BTC">Bitcoin (BTC)</option>
                         <option value="ETH">Ethereum (ETH)</option>
@@ -759,7 +759,7 @@ function app() {
         upload: { pickedDate: '', weekDate: '', overwrite: false, file: null, fileName: '', previewSrc: null, dragOver: false, busy: false },
         crypto: { symbol: 'LTC', txInput: '', busy: false },
         manual: { notes: '', busy: false },
-        estimate: { amount: null, price: null },
+        estimate: { amount: null, price: null, priceSymbol: null, fetchedAt: 0 },
 
         approvalModal: { open: false, weekDate: '', overwrite: false, records: [], unknownContractors: [], existingContractors: [], mappings: {} },
         teamModal: { open: false, name: '', members: [] },
@@ -771,7 +771,7 @@ function app() {
         },
 
         init() {
-            this.$watch('selectedIds', () => this.refreshEstimate());
+            this.$watch('selectedIds', () => this.debouncedRefreshEstimate());
         },
 
         // ---------- toasts ----------
@@ -1037,13 +1037,38 @@ function app() {
         },
 
         // ---------- crypto reconciliation ----------
+        debouncedRefreshEstimate() {
+            // Selecting several contractors fires this watcher once per
+            // checkbox click. Without debouncing, ticking 5 boxes made 5
+            // rapid CoinGecko calls before you'd even clicked "Verify" —
+            // burning through the same tight rate-limit budget that the
+            // actual reconciliation lookup needs. Wait for clicking to
+            // pause before actually fetching.
+            clearTimeout(this._estimateDebounce);
+            this._estimateDebounce = setTimeout(() => this.refreshEstimate(), 600);
+        },
         async refreshEstimate() {
-            if (!this.selectedIds.length) { this.estimate = { amount: null, price: null }; return; }
+            if (!this.selectedIds.length) { this.estimate = { amount: null, price: null, priceSymbol: null, fetchedAt: 0 }; return; }
+
+            // Reuse a price fetched in the last 30s for the same coin
+            // instead of re-hitting CoinGecko — this is a rough estimate
+            // shown before sending, not the reconciliation price, so a
+            // few-seconds-stale number is a fine trade for far fewer calls.
+            const isFresh = this.estimate.priceSymbol === this.crypto.symbol
+                && this.estimate.price
+                && (Date.now() - this.estimate.fetchedAt) < 30000;
+            if (isFresh) {
+                this.estimate.amount = (this.selectedTotal / this.estimate.price).toFixed(6);
+                return;
+            }
+
             try {
                 const res = await fetch(`/api/live-price?symbol=${this.crypto.symbol}`);
                 const data = await res.json();
                 if (data.status === 'success') {
                     this.estimate.price = data.price_usd;
+                    this.estimate.priceSymbol = this.crypto.symbol;
+                    this.estimate.fetchedAt = Date.now();
                     this.estimate.amount = (this.selectedTotal / data.price_usd).toFixed(6);
                 }
             } catch (e) { /* silent — estimate is best-effort */ }
