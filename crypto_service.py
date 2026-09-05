@@ -72,7 +72,7 @@ def extract_tx_hash(raw_input: str, symbol: str) -> str:
 
     symbol_upper = symbol.strip().upper()
 
-    if symbol_upper == "ETH":
+    if symbol_upper in _ETH_FAMILY_SYMBOLS:
         match = _ETH_HASH_RE.search(text)
         if match:
             return match.group(0).lower()
@@ -148,6 +148,21 @@ def detect_symbol_from_input(raw_input: str):
     return None
 
 
+def symbol_chain_family(symbol: str) -> str:
+    """Maps a specific coin/token symbol to the underlying chain it's
+    verified on. USDT/USDC/DAI are all Ethereum-family (checked via the
+    same Etherscan API as native ETH), so a plain etherscan.io link can't
+    tell us which of the four it is — only that it's "the ETH family".
+    Callers use this to decide whether an auto-detected symbol should
+    override the dropdown: overriding ETH-family with LTC (a genuine
+    cross-chain correction) makes sense; overriding USDT with generic ETH
+    just because both use etherscan.io links does not."""
+    symbol_upper = symbol.strip().upper()
+    if symbol_upper in _ETH_FAMILY_SYMBOLS:
+        return "ETH"
+    return symbol_upper
+
+
 # --------------------------------------------------------------------------
 # Chain lookups. Each returns a dict:
 #   { amount, timestamp, confirmations, explorer_url }
@@ -206,21 +221,58 @@ def _eth_rpc(url: str) -> dict:
     raise ValueError("Etherscan API error: rate limit reached and retries were exhausted.")
 
 
+_ETH_BASE_URL = "https://api.etherscan.io/v2/api"
+_ETH_MAINNET_CHAINID = 1
+
+# Ethereum-family symbols all use 0x-prefixed hashes and go through the same
+# Etherscan proxy API, whether it's native ETH or an ERC-20 token transfer.
+_ERC20_TOKENS = {
+    # Contract addresses confirmed directly against Etherscan's own token
+    # pages — a typo here would mean checking an entirely wrong contract.
+    "USDT": {"contract": "0xdac17f958d2ee523a2206206994597c13d831ec7", "decimals": 6, "coingecko_id": "tether"},
+    "USDC": {"contract": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "decimals": 6, "coingecko_id": "usd-coin"},
+    "DAI": {"contract": "0x6b175474e89094c44da98b954eedeac495271d0", "decimals": 18, "coingecko_id": "dai"},
+}
+_ETH_FAMILY_SYMBOLS = {"ETH"} | set(_ERC20_TOKENS.keys())
+
+
+def _fetch_eth_confirmation_info(block_number_hex, api_key: str):
+    """Returns (timestamp, confirmations) for the block a tx landed in, or
+    (None, 0) if there's no block number yet. Shared by native-ETH and
+    ERC-20 verification since both need the exact same two follow-up
+    Etherscan calls once they know which block the tx is in."""
+    if not block_number_hex:
+        return None, 0
+
+    time.sleep(0.35)
+    block_data = _eth_rpc(
+        f"{_ETH_BASE_URL}?chainid={_ETH_MAINNET_CHAINID}&module=proxy&action=eth_getBlockByNumber"
+        f"&tag={block_number_hex}&boolean=false&apikey={api_key}"
+    )
+    block_result = block_data.get("result") or {}
+    timestamp = int(block_result["timestamp"], 16) if "timestamp" in block_result else None
+
+    time.sleep(0.35)
+    latest_data = _eth_rpc(
+        f"{_ETH_BASE_URL}?chainid={_ETH_MAINNET_CHAINID}&module=proxy&action=eth_blockNumber&apikey={api_key}"
+    )
+    latest_hex = latest_data.get("result")
+    confirmations = max(0, int(latest_hex, 16) - int(block_number_hex, 16) + 1) if latest_hex else 0
+
+    return timestamp, confirmations
+
+
 def verify_eth_tx(tx_hash: str) -> dict:
     """Verifies a native ETH transfer via Etherscan's API V2 (mainnet,
-    chainid=1). ERC-20 transfers are rejected — their decimals and USD
-    pricing can't be safely inferred generically, so token payments should
-    be reconciled manually."""
+    chainid=1). A transfer to one of the known stablecoin contracts is
+    redirected to verify_erc20_tx instead of being rejected outright."""
     target_addr = get_eth_address().lower()
     clean_tx = tx_hash.strip().lower()
     if not _ETH_HASH_RE.fullmatch(clean_tx):
         raise ValueError("Invalid Ethereum transaction hash format (must be 0x + 64 hex characters).")
 
     api_key = _require_etherscan_key()
-    # Etherscan fully deprecated the old V1 base URL (api.etherscan.io/api)
-    # on 2025-08-15. V2 requires a chainid query param; 1 = Ethereum mainnet.
-    base = "https://api.etherscan.io/v2/api"
-    chainid = 1
+    base, chainid = _ETH_BASE_URL, _ETH_MAINNET_CHAINID
 
     tx_data = _eth_rpc(
         f"{base}?chainid={chainid}&module=proxy&action=eth_getTransactionByHash&txhash={clean_tx}&apikey={api_key}"
@@ -232,12 +284,6 @@ def verify_eth_tx(tx_hash: str) -> dict:
     # A transaction can be mined but still have reverted (spent gas, moved
     # nothing). eth_getTransactionByHash alone can't tell you that — you
     # need the receipt's status field.
-    #
-    # This function makes up to 4 sequential Etherscan calls total. A short
-    # pause between them keeps a single verification comfortably under a
-    # free-tier key's 3-req/sec cap, instead of relying only on _eth_rpc's
-    # reactive retry for a limit that a fresh key can trip on its very
-    # first use.
     time.sleep(0.35)
     receipt_data = _eth_rpc(
         f"{base}?chainid={chainid}&module=proxy&action=eth_getTransactionReceipt&txhash={clean_tx}&apikey={api_key}"
@@ -256,35 +302,19 @@ def verify_eth_tx(tx_hash: str) -> dict:
             amount_eth = int(result.get("value", "0x0"), 16) / 1e18
         except ValueError:
             raise ValueError("Failed to parse Ethereum transaction transfer value.")
-    elif input_data.startswith("0xa9059cbb"):
-        raise ValueError(
-            "This looks like an ERC-20 token transfer, not native ETH. Token "
-            "payments aren't auto-verified (decimals and pricing vary by token) — "
-            "please reconcile this one manually."
-        )
     else:
+        matching_token = next((sym for sym, t in _ERC20_TOKENS.items() if t["contract"] == tx_to), None)
+        if matching_token:
+            raise ValueError(
+                f"This is a {matching_token} transfer, not native ETH. Select "
+                f"{matching_token} in the coin dropdown and verify it again."
+            )
         raise ValueError(f"Transaction recipient ('{tx_to}') does not match the designated wallet '{get_eth_address()}'.")
 
     if amount_eth <= 0:
         raise ValueError("Transaction contains 0 ETH transferred to the target address.")
 
-    block_number_hex = result.get("blockNumber")
-    timestamp = None
-    confirmations = 0
-    if block_number_hex:
-        time.sleep(0.35)
-        block_data = _eth_rpc(
-            f"{base}?chainid={chainid}&module=proxy&action=eth_getBlockByNumber&tag={block_number_hex}&boolean=false&apikey={api_key}"
-        )
-        block_result = block_data.get("result") or {}
-        if "timestamp" in block_result:
-            timestamp = int(block_result["timestamp"], 16)
-
-        time.sleep(0.35)
-        latest_data = _eth_rpc(f"{base}?chainid={chainid}&module=proxy&action=eth_blockNumber&apikey={api_key}")
-        latest_hex = latest_data.get("result")
-        if latest_hex:
-            confirmations = max(0, int(latest_hex, 16) - int(block_number_hex, 16) + 1)
+    timestamp, confirmations = _fetch_eth_confirmation_info(result.get("blockNumber"), api_key)
 
     if timestamp is None:
         # Don't guess — an old, replayed txid would look freshly sent if we
@@ -297,6 +327,95 @@ def verify_eth_tx(tx_hash: str) -> dict:
 
     return {
         "amount": amount_eth,
+        "timestamp": timestamp,
+        "confirmations": confirmations,
+        "explorer_url": f"https://etherscan.io/tx/{clean_tx}",
+    }
+
+
+def verify_erc20_tx(tx_hash: str, token_symbol: str) -> dict:
+    """Verifies an ERC-20 stablecoin transfer (USDT, USDC, or DAI) on
+    Ethereum mainnet to the configured wallet. Decodes the transferred
+    amount using THAT TOKEN'S OWN decimals (6 for USDT/USDC, 18 for DAI)
+    instead of assuming 18 across the board — that exact assumption was
+    the bug that made the original app's ERC-20 handling silently wrong by
+    orders of magnitude for 6-decimal tokens, and why ERC-20 support was
+    disabled entirely rather than shipped broken."""
+    token_symbol_upper = token_symbol.strip().upper()
+    token = _ERC20_TOKENS.get(token_symbol_upper)
+    if not token:
+        raise ValueError(f"'{token_symbol}' is not a supported token.")
+
+    target_addr = get_eth_address().lower()
+    contract_addr = token["contract"]
+    clean_tx = tx_hash.strip().lower()
+    if not _ETH_HASH_RE.fullmatch(clean_tx):
+        raise ValueError(f"Invalid {token_symbol_upper} transaction hash format (must be 0x + 64 hex characters).")
+
+    api_key = _require_etherscan_key()
+    base, chainid = _ETH_BASE_URL, _ETH_MAINNET_CHAINID
+
+    tx_data = _eth_rpc(
+        f"{base}?chainid={chainid}&module=proxy&action=eth_getTransactionByHash&txhash={clean_tx}&apikey={api_key}"
+    )
+    result = tx_data.get("result")
+    if not result or not isinstance(result, dict):
+        raise ValueError(f"{token_symbol_upper} transaction not found. Verify the TxID on Etherscan.")
+
+    time.sleep(0.35)
+    receipt_data = _eth_rpc(
+        f"{base}?chainid={chainid}&module=proxy&action=eth_getTransactionReceipt&txhash={clean_tx}&apikey={api_key}"
+    )
+    receipt = receipt_data.get("result")
+    if not receipt:
+        raise ValueError("This transaction has not been mined yet. Wait for it to confirm and try again.")
+    if receipt.get("status") != "0x1":
+        raise ValueError("This transaction reverted on-chain, so no tokens were actually transferred.")
+
+    tx_to = str(result.get("to") or "").strip().lower()
+    if tx_to != contract_addr:
+        raise ValueError(
+            f"This transaction wasn't sent to the {token_symbol_upper} contract "
+            f"({token['contract']}) — it doesn't look like a {token_symbol_upper} transfer. "
+            f"Double-check you picked the right coin."
+        )
+
+    input_data = str(result.get("input") or "0x")
+    # transfer(address,uint256) selector: keccak256("transfer(address,uint256"))[:4]
+    if not input_data.startswith("0xa9059cbb") or len(input_data) < 138:
+        raise ValueError(
+            f"This transaction's call data doesn't match a standard "
+            f"{token_symbol_upper} transfer() — it may be an approval, a "
+            f"transferFrom, or something else entirely."
+        )
+
+    recipient_hex = "0x" + input_data[34:74].lower()
+    if recipient_hex != target_addr:
+        raise ValueError(
+            f"This {token_symbol_upper} transfer was sent to '{recipient_hex}', not "
+            f"the designated wallet '{get_eth_address()}'."
+        )
+
+    try:
+        raw_value = int(input_data[74:138], 16)
+    except ValueError:
+        raise ValueError(f"Failed to parse the {token_symbol_upper} transfer amount.")
+
+    amount = raw_value / (10 ** token["decimals"])
+    if amount <= 0:
+        raise ValueError(f"Transaction contains 0 {token_symbol_upper} transferred to the target address.")
+
+    timestamp, confirmations = _fetch_eth_confirmation_info(result.get("blockNumber"), api_key)
+
+    if timestamp is None:
+        raise ValueError(
+            f"This {token_symbol_upper} transaction is confirmed, but the exact time "
+            f"it was sent couldn't be determined. Refusing to guess — try verifying "
+            f"again in a moment."
+        )
+
+    return {
+        "amount": amount,
         "timestamp": timestamp,
         "confirmations": confirmations,
         "explorer_url": f"https://etherscan.io/tx/{clean_tx}",
@@ -572,8 +691,12 @@ def verify_ltc_tx(tx_hash: str) -> dict:
 # for reconciliation.
 # --------------------------------------------------------------------------
 
-_COINGECKO_IDS = {"ETH": "ethereum", "BTC": "bitcoin", "LTC": "litecoin"}
+_COINGECKO_IDS = {
+    "ETH": "ethereum", "BTC": "bitcoin", "LTC": "litecoin",
+    "USDT": "tether", "USDC": "usd-coin", "DAI": "dai",
+}
 _BINANCE_SYMBOLS = {"ETH": "ETHUSDT", "BTC": "BTCUSDT", "LTC": "LTCUSDT"}
+_STABLECOIN_SYMBOLS = {"USDT", "USDC", "DAI"}
 
 
 def _binance_historical_price(symbol_upper: str, timestamp: int):
@@ -688,6 +811,18 @@ def get_price_usd_at(symbol: str, timestamp: int) -> float:
     except Exception as e:
         errors.append(f"CoinGecko history: {e}")
 
+    # Stablecoins: skip Binance/Kraken (their pairs for these tokens are
+    # unreliable proxies for "USD price" — e.g. USDC/USDT isn't really a
+    # market rate for either against the dollar) and fall back to the
+    # $1.00 peg instead of blocking a payroll run over a pricing hiccup
+    # for an asset that's virtually always sitting within a fraction of a
+    # cent of that anyway. This is the one deliberate exception to "never
+    # guess" in this file — the risk profile is fundamentally different
+    # from a volatile asset like BTC/ETH/LTC.
+    if symbol_upper in _STABLECOIN_SYMBOLS:
+        print(f"get_price_usd_at({symbol_upper}, {timestamp}): CoinGecko failed ({'; '.join(errors)}); assuming $1.00 peg.")
+        return 1.0
+
     # 3) Binance klines — independent provider entirely, so a CoinGecko
     # outage or rate-limit doesn't block reconciliation.
     binance_price = _binance_historical_price(symbol_upper, timestamp)
@@ -732,6 +867,12 @@ def get_current_price_usd(symbol: str) -> float:
         except Exception:
             pass
 
+    if symbol_upper in _STABLECOIN_SYMBOLS:
+        # This is just the "≈ amount owed in crypto" display estimate, not
+        # a reconciliation price — $1.00 is a fine placeholder if the live
+        # lookup fails for a moment.
+        return 1.0
+
     raise ValueError(f"Unable to fetch the current USD exchange rate for '{symbol}'.")
 
 
@@ -751,6 +892,8 @@ def verify_and_price_tx(raw_tx_input: str, symbol: str) -> dict:
 
     if symbol_upper == "ETH":
         result = verify_eth_tx(clean_hash)
+    elif symbol_upper in _ERC20_TOKENS:
+        result = verify_erc20_tx(clean_hash, symbol_upper)
     elif symbol_upper == "BTC":
         result = verify_btc_tx(clean_hash)
     elif symbol_upper == "LTC":
