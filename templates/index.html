@@ -101,6 +101,8 @@ tr.paid td .name{color:var(--text)}
 .status{display:inline-block;padding:3px 9px;border-radius:999px;font-size:11.5px;font-weight:500}
 .status.due{background:var(--amber-dim);color:var(--amber)}
 .status.paid{background:var(--green-dim);color:var(--green)}
+.plus{background:none;border:1px solid var(--rule);color:var(--muted);width:20px;height:20px;border-radius:50%;font-size:13px;line-height:1;cursor:pointer;margin-left:6px;vertical-align:middle;padding:0}
+.plus:hover{border-color:var(--amber);color:var(--amber)}
 .credit-pill{display:inline-block;margin-left:8px;padding:2px 7px;border-radius:999px;font-size:11px;background:var(--amber-dim);color:var(--amber);font-family:var(--mono)}
 .notes-cell{max-width:280px;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-size:12.5px}
 .empty{padding:40px;text-align:center;color:var(--muted)}
@@ -167,6 +169,7 @@ tr.paid td .name{color:var(--text)}
       <select style="width:auto" x-model="selectedWeek" @change="loadWeek(selectedWeek)">
         <template x-for="w in weeks" :key="w"><option :value="w" x-text="w"></option></template>
       </select>
+      <button class="btn sm" @click="openAdvance()">Advance credit</button>
       <a class="btn sm" x-show="selectedWeek" :href="'/api/export-csv?week_date='+encodeURIComponent(selectedWeek)">Export CSV</a>
       <button class="btn sm danger" x-show="selectedWeek" @click="deleteCurrentWeek()">Delete week</button>
     </div>
@@ -255,6 +258,7 @@ tr.paid td .name{color:var(--text)}
                 <td>
                   <button class="name" @click="openHistory(item.contractor_id,item.contractor)" x-text="item.contractor"></button>
                   <span class="credit-pill" x-show="Number(item.credit_balance)>0" title="Advance balance available" x-text="'+'+fmt(item.credit_balance)"></span>
+                  <button class="plus" title="Record advance credit for this contractor" @click="openAdvance('contractor',item.contractor_id)">+</button>
                 </td>
                 <td class="amt">
                   <template x-if="Number(item.credit_applied_usd)>0 && !isPaid(item.status)">
@@ -409,6 +413,36 @@ tr.paid td .name{color:var(--text)}
           </div>
         </div>
       </template>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" x-show="advance.open" x-cloak @keydown.escape.window="advance.open=false">
+  <div class="modal">
+    <div class="mhead"><h3>Advance credit</h3><button class="x" @click="advance.open=false">✕</button></div>
+    <p style="color:var(--muted);margin:0 0 12px">Record extra that was sent, whether or not anything is owed right now. It sits on the balance until you choose to deduct it against unpaid rows (select them → Record payment → Advance credit).</p>
+    <div class="field">
+      <label>Whose balance</label>
+      <select x-model="advance.source">
+        <optgroup label="Contractors">
+          <template x-for="c in contractors" :key="'c'+c.id"><option :value="'c:'+c.id" x-text="c.name+' — '+fmt(c.credit_balance)"></option></template>
+        </optgroup>
+        <optgroup label="Teams" x-show="teams.length">
+          <template x-for="t in teams" :key="'t'+t.id"><option :value="'t:'+t.id" x-text="'Team '+t.name+' — '+fmt(t.credit_balance)"></option></template>
+        </optgroup>
+      </select>
+    </div>
+    <div class="stat3" style="grid-template-columns:1fr 1fr">
+      <div><div class="l">Current balance</div><div class="v" :style="advanceBalance>0?'color:var(--amber)':''" x-text="fmt(advanceBalance)"></div></div>
+      <div><div class="l">After adding</div><div class="v" x-text="fmt(advanceBalance+Number(advance.amount||0))"></div></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Extra received (USD)</label><input type="number" step="0.01" min="0" x-model="advance.amount" placeholder="100.00"></div>
+      <div class="field"><label>Note</label><input type="text" x-model="advance.note" placeholder="e.g. paid ahead via Venmo"></div>
+    </div>
+    <div class="actions">
+      <button class="btn primary" :disabled="advance.busy||!advance.amount||!advance.source" @click="submitAdvance()" x-text="advance.busy?'Saving…':'Add to balance'"></button>
+      <button class="btn" @click="advance.open=false">Cancel</button>
     </div>
   </div>
 </div>
@@ -647,6 +681,7 @@ function app(){
     estimate:{amount:null,price:null,priceSymbol:null,fetchedAt:0},
     mismatch:{open:false,busy:false,kind:'crypto',ledgerIds:[],txInput:'',symbol:'',method:'',amount:0,totalOwed:0,receivedUsd:0,difference:0,note:'',bankExcess:true,singleContractor:false},
     details:{open:false,item:null},
+    advance:{open:false,source:'',amount:'',note:'',busy:false},
     approval:{open:false,weekDate:'',overwrite:false,records:[],unknown:[],existing:[],mappings:{}},
     teamModal:{open:false,name:'',members:[]}, teamsModal:{open:false}, contractorModal:{open:false},
     history:{open:false,loading:false,id:null,name:'',totalOwed:0,totalPaid:0,creditBalance:0,rows:[],credits:[],advanceAmount:'',advanceNote:''},
@@ -707,6 +742,25 @@ function app(){
     selectAll(on){ if(on){ const ids=this.filteredLedgers.filter(r=>!this.isPaid(r.status)).map(r=>r.id); this.selectedIds=Array.from(new Set([...this.selectedIds,...ids])); } else this.selectedIds=[]; },
     openPay(tab){ this.pay.tab=tab; this.pay.open=true; this.manual.amount=''; this.credit.source=this.creditSources[0]?.key||''; this.refreshEstimate(); },
     openDetails(item){ this.details={open:true,item}; },
+    get advanceBalance(){
+      const [k,id]=(this.advance.source||'').split(':'); if(!k) return 0;
+      const list=k==='t'?this.teams:this.contractors; const o=list.find(x=>String(x.id)===id); return Number(o?.credit_balance||0);
+    },
+    openAdvance(kind,id){
+      const src = kind && id!=null ? (kind==='team'?'t:':'c:')+id : (this.advance.source || (this.contractors[0]?('c:'+this.contractors[0].id):''));
+      this.advance={open:true,source:src,amount:'',note:'',busy:false};
+    },
+    async submitAdvance(){
+      const [k,id]=this.advance.source.split(':'); const body=k==='t'?{team_id:Number(id)}:{contractor_id:Number(id)};
+      this.advance.busy=true;
+      try{ const res=await this.post('/api/credits/add',{...body,amount:Number(this.advance.amount),note:this.advance.note}); const d=await res.json();
+        if(res.ok&&d.status==='success'){
+          const list=k==='t'?this.teams:this.contractors; const o=list.find(x=>String(x.id)===id); if(o) o.credit_balance=d.credit_balance;
+          const label=o?(k==='t'?'Team '+o.name:o.name):'Balance';
+          this.notify(`${label} advance balance is now ${this.fmt(d.credit_balance)}.`,'success'); this.advance.open=false; await this.refreshLedgers();
+        } else this.notify(d.message||"Couldn't add that.",'error');
+      }catch(e){ this.notify('Network error.','error'); } finally{ this.advance.busy=false; }
+    },
 
     async loadWeek(week){
       try{ const res=await fetch(`/api/ledgers?week_date=${encodeURIComponent(week)}`); const d=await res.json();
