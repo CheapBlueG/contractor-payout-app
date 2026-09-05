@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from database import init_db, get_db, get_est_now, unix_to_est
-from crypto_service import extract_tx_hash, verify_and_price_tx, get_current_price_usd
+from crypto_service import extract_tx_hash, verify_and_price_tx, get_current_price_usd, detect_symbol_from_input
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -422,13 +422,24 @@ async def reconcile_crypto(
     if not ledger_ids or not tx_id:
         return JSONResponse(status_code=400, content={"status": "error", "message": "Missing ledger selection or TxID."})
 
+    # If what was pasted is a link (or an 0x-prefixed hash), we can often
+    # tell which coin it's for from the explorer's domain/hash format —
+    # more reliable than trusting whatever the dropdown happens to be set
+    # to, since someone can easily paste a link without also remembering
+    # to flip the coin selector first. A bare hash with no coin-specific
+    # context can't be auto-detected (BTC/LTC hashes look identical), so
+    # detection returning None just means "trust the dropdown" as before.
+    detected_symbol = detect_symbol_from_input(tx_id)
+    symbol_auto_corrected = bool(detected_symbol and detected_symbol != symbol.strip().upper())
+    effective_symbol = detected_symbol or symbol
+
     # Accept a raw hash OR a pasted explorer link (any explorer) up front,
     # so the duplicate check and the on-chain lookup both key off the same
     # normalized hash.
     try:
-        clean_hash = extract_tx_hash(tx_id, symbol)
+        clean_hash = extract_tx_hash(tx_id, effective_symbol)
     except ValueError as err:
-        print(f"reconcile-crypto: hash extraction failed for input '{tx_id}' ({symbol}): {err}")
+        print(f"reconcile-crypto: hash extraction failed for input '{tx_id}' ({effective_symbol}): {err}")
         return JSONResponse(status_code=400, content={"status": "error", "message": str(err)})
 
     conn = None
@@ -457,12 +468,12 @@ async def reconcile_crypto(
         total_owed = float(res["total"]) if res and res["total"] else 0.0
 
         try:
-            verification = verify_and_price_tx(clean_hash, symbol)
+            verification = verify_and_price_tx(clean_hash, effective_symbol)
         except ValueError as err:
-            print(f"reconcile-crypto: verification failed for {symbol.upper()} tx {clean_hash}: {err}")
+            print(f"reconcile-crypto: verification failed for {effective_symbol.upper()} tx {clean_hash}: {err}")
             return JSONResponse(status_code=400, content={"status": "error", "message": str(err)})
         except Exception as err:
-            print(f"reconcile-crypto: UNEXPECTED error verifying {symbol.upper()} tx {clean_hash}: {err}")
+            print(f"reconcile-crypto: UNEXPECTED error verifying {effective_symbol.upper()} tx {clean_hash}: {err}")
             return JSONResponse(status_code=500, content={"status": "error", "message": f"Unexpected verification error: {str(err)}"})
 
         tx_usd_val = verification["usd_value"]
@@ -495,13 +506,13 @@ async def reconcile_crypto(
                     UPDATE weekly_ledgers
                     SET status = 'PAID', paid_at_est = %s, crypto_tx_id = %s, crypto_symbol = %s, notes = %s
                     WHERE id IN ({placeholders})
-                """, [paid_at_est, clean_hash, symbol.upper(), notes_value] + ledger_ids)
+                """, [paid_at_est, clean_hash, effective_symbol.upper(), notes_value] + ledger_ids)
             else:
                 cursor.execute(f"""
                     UPDATE weekly_ledgers
                     SET status = 'PAID', paid_at_est = %s, crypto_tx_id = %s, crypto_symbol = %s
                     WHERE id IN ({placeholders})
-                """, [paid_at_est, clean_hash, symbol.upper()] + ledger_ids)
+                """, [paid_at_est, clean_hash, effective_symbol.upper()] + ledger_ids)
 
             conn.commit()
             return {
@@ -514,6 +525,8 @@ async def reconcile_crypto(
                 "explorer_url": verification["explorer_url"],
                 "tx_hash": verification["tx_hash"],
                 "paid_at_est": paid_at_est,
+                "symbol_used": effective_symbol.upper(),
+                "symbol_auto_corrected": symbol_auto_corrected,
             }
         else:
             return {
@@ -525,6 +538,8 @@ async def reconcile_crypto(
                 "confirmations": verification["confirmations"],
                 "explorer_url": verification["explorer_url"],
                 "tx_hash": verification["tx_hash"],
+                "symbol_used": effective_symbol.upper(),
+                "symbol_auto_corrected": symbol_auto_corrected,
             }
     finally:
         if conn:
