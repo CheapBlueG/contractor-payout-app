@@ -494,9 +494,11 @@ _BINANCE_SYMBOLS = {"ETH": "ETHUSDT", "BTC": "BTCUSDT", "LTC": "LTCUSDT"}
 
 def _binance_historical_price(symbol_upper: str, timestamp: int):
     """Fallback price source: Binance's public kline (candlestick) API has
-    free, no-auth historical data going back years for these pairs, so it
-    covers cases where CoinGecko is rate-limited or briefly missing a
-    window for the free tier. Returns None (never raises) if unavailable."""
+    free, no-auth historical data going back years for these pairs. Note:
+    Binance is known to geo-block cloud-provider IPs (AWS/GCP, which is
+    what most PaaS hosts including Render run on) with an error response
+    that ISN'T a list — the old version of this function silently treated
+    that as "no data" instead of surfacing what Binance actually said."""
     b_sym = _BINANCE_SYMBOLS.get(symbol_upper)
     if not b_sym:
         return None
@@ -507,14 +509,52 @@ def _binance_historical_price(symbol_upper: str, timestamp: int):
             f"https://api.binance.com/api/v3/klines?symbol={b_sym}&interval=1m"
             f"&startTime={start_ms}&endTime={end_ms}&limit=10"
         )
-        res = requests.get(url, timeout=10).json()
+        response = requests.get(url, timeout=10)
+        res = response.json()
         if isinstance(res, list) and res:
             # Each kline: [open_time_ms, open, high, low, close, ...]
             closest = min(res, key=lambda k: abs((k[0] / 1000) - timestamp))
             return float(closest[4])  # close price of the nearest 1-minute candle
+        # Binance returns a dict like {"code": -1, "msg": "..."} on errors —
+        # including HTTP 451 for geo-blocked IPs — instead of raising. Log
+        # the real content so "no candles" vs. "blocked entirely" is visible.
+        print(f"Binance klines returned no usable data for {symbol_upper} (HTTP {response.status_code}): {res}")
     except Exception as e:
         print(f"Binance historical price fallback failed for {symbol_upper}: {e}")
     return None
+
+
+_KRAKEN_PAIRS = {"BTC": "XBTUSD", "ETH": "ETHUSD", "LTC": "LTCUSD"}
+
+
+def _kraken_historical_price(symbol_upper: str, timestamp: int):
+    """Second fallback price source, independent of both CoinGecko and
+    Binance. Kraken doesn't geo-block cloud/US IPs the way Binance does,
+    so this covers exactly the failure mode above."""
+    pair = _KRAKEN_PAIRS.get(symbol_upper)
+    if not pair:
+        return None
+    try:
+        since = timestamp - 300
+        url = f"https://api.kraken.com/0/public/OHLC?pair={pair}&interval=1&since={since}"
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        if data.get("error"):
+            print(f"Kraken OHLC error for {symbol_upper}: {data['error']}")
+            return None
+        result = data.get("result", {})
+        # Kraken echoes the pair back under its own internal name (which can
+        # differ slightly from what was requested), so just take whichever
+        # key isn't "last" rather than assuming an exact match.
+        candles = next((v for k, v in result.items() if k != "last"), None)
+        if not candles:
+            print(f"Kraken OHLC returned no candles for {symbol_upper} ({pair}): {data}")
+            return None
+        closest = min(candles, key=lambda c: abs(float(c[0]) - timestamp))
+        return float(closest[4])  # close price
+    except Exception as e:
+        print(f"Kraken historical price fallback failed for {symbol_upper}: {e}")
+        return None
 
 
 def get_price_usd_at(symbol: str, timestamp: int) -> float:
@@ -569,13 +609,20 @@ def get_price_usd_at(symbol: str, timestamp: int) -> float:
     binance_price = _binance_historical_price(symbol_upper, timestamp)
     if binance_price:
         return binance_price
-    errors.append("Binance klines: no candle found near this timestamp")
+    errors.append("Binance klines: no usable data (see server log for the exact response)")
+
+    # 4) Kraken OHLC — a second independent provider, in case Binance is
+    # geo-blocking this server's IP (common for cloud/US-hosted apps).
+    kraken_price = _kraken_historical_price(symbol_upper, timestamp)
+    if kraken_price:
+        return kraken_price
+    errors.append("Kraken OHLC: no usable data (see server log for the exact response)")
 
     print(f"get_price_usd_at({symbol_upper}, {timestamp}) failed on every source: {'; '.join(errors)}")
     raise ValueError(
         f"Unable to determine the historical USD price for {symbol_upper} at the "
-        f"time this transaction was sent (checked CoinGecko and Binance). This is "
-        f"usually a temporary rate limit — try again in a minute. If it keeps "
+        f"time this transaction was sent (checked CoinGecko, Binance, and Kraken). "
+        f"This is usually a temporary rate limit — try again in a minute. If it keeps "
         f"failing for this specific transaction, check the Render logs for the "
         f"exact error."
     )
