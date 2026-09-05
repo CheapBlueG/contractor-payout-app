@@ -682,6 +682,41 @@
     </div>
 </div>
 
+<!-- Modal: Amount Mismatch Override -->
+<div class="modal-overlay" x-show="mismatchModal.open" x-cloak>
+    <div class="modal">
+        <div class="modal-header">
+            <h3>Amount Doesn't Match</h3>
+            <button class="btn btn-secondary btn-sm" @click="mismatchModal.open = false">✕</button>
+        </div>
+        <p style="font-size: 13px; color: var(--text-muted);">
+            This transaction was verified on-chain, but it doesn't add up to what's owed.
+            You can override and mark it paid anyway — useful for a small shortfall from
+            network fees, a slightly wrong amount, or an approved partial payment.
+        </p>
+        <div class="summary-strip">
+            <div class="stat">Owed<strong x-text="'$' + Number(mismatchModal.totalOwed).toFixed(2)"></strong></div>
+            <div class="stat">Received<strong x-text="'$' + Number(mismatchModal.receivedUsd).toFixed(2)"></strong></div>
+            <div class="stat">
+                <span x-text="mismatchModal.difference < 0 ? 'Underpaid by' : 'Overpaid by'"></span>
+                <strong :style="mismatchModal.difference < 0 ? 'color: var(--danger)' : 'color: var(--warning)'"
+                        x-text="'$' + Math.abs(mismatchModal.difference).toFixed(2)"></strong>
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="overrideNote">Note (optional — saved on the ledger entry)</label>
+            <input type="text" id="overrideNote" x-model="mismatchModal.note"
+                   placeholder="e.g. Sent minus network fee, approved by manager">
+        </div>
+        <div class="flex-actions">
+            <button class="btn btn-danger" :disabled="mismatchModal.busy" @click="submitOverride()">
+                <span x-text="mismatchModal.busy ? 'Marking Paid…' : 'Override & Mark Paid Anyway'"></span>
+            </button>
+            <button class="btn btn-secondary" @click="mismatchModal.open = false">Cancel</button>
+        </div>
+    </div>
+</div>
+
 <!-- Toasts -->
 <div class="toast-stack">
     <template x-for="t in toasts" :key="t.id">
@@ -730,6 +765,10 @@ function app() {
         teamModal: { open: false, name: '', members: [] },
         contractorModal: { open: false },
         historyModal: { open: false, loading: false, name: '', totalOwed: 0, totalPaid: 0, history: [] },
+        mismatchModal: {
+            open: false, busy: false, ledgerIds: [], txInput: '', symbol: '',
+            totalOwed: 0, receivedUsd: 0, difference: 0, note: ''
+        },
 
         init() {
             this.$watch('selectedIds', () => this.refreshEstimate());
@@ -1023,16 +1062,29 @@ function app() {
 
                 if (res.ok && data.status === 'matched') {
                     this.notify(
-                        `Match confirmed — $${data.received_usd} received (${data.confirmations} confirmation${data.confirmations === 1 ? '' : 's'}). Marked PAID.`,
+                        `Match confirmed — $${data.received_usd} received (${data.confirmations} confirmation${data.confirmations === 1 ? '' : 's'}). Marked PAID as of ${data.paid_at_est} (when it was sent).`,
                         'success'
                     );
                     this.crypto.txInput = '';
                     await this.refreshLedgers();
                 } else if (data.status === 'mismatch') {
-                    this.notify(
-                        `Mismatch: owed $${data.total_owed}, tx was worth $${data.received_usd} at send time (diff $${data.difference}).`,
-                        'error'
-                    );
+                    // Don't just dead-end here — offer an explicit override
+                    // path. This matters most for underpayments (a few cents
+                    // short from network fees, a typo'd amount, etc.) where
+                    // blocking the whole payment from ever being recorded
+                    // would be worse than letting someone consciously accept
+                    // the shortfall.
+                    this.mismatchModal = {
+                        open: true,
+                        busy: false,
+                        ledgerIds: [...this.selectedIds],
+                        txInput: this.crypto.txInput.trim(),
+                        symbol: this.crypto.symbol,
+                        totalOwed: data.total_owed,
+                        receivedUsd: data.received_usd,
+                        difference: data.difference,
+                        note: '',
+                    };
                 } else {
                     this.notify(data.message || 'Verification failed.', 'error');
                 }
@@ -1040,6 +1092,39 @@ function app() {
                 this.notify('Network error connecting to API.', 'error');
             } finally {
                 this.crypto.busy = false;
+            }
+        },
+
+        async submitOverride() {
+            this.mismatchModal.busy = true;
+            try {
+                const res = await fetch('/api/reconcile-crypto', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ledger_ids: this.mismatchModal.ledgerIds,
+                        tx_id: this.mismatchModal.txInput,
+                        symbol: this.mismatchModal.symbol,
+                        override: true,
+                        override_note: this.mismatchModal.note,
+                    })
+                });
+                const data = await res.json();
+
+                if (res.ok && data.status === 'matched') {
+                    this.notify(
+                        `Marked PAID with override — $${data.received_usd} received of $${data.total_owed} owed, as of ${data.paid_at_est}.`,
+                        'success'
+                    );
+                    this.mismatchModal.open = false;
+                    this.crypto.txInput = '';
+                    await this.refreshLedgers();
+                } else {
+                    this.notify(data.message || 'Override failed.', 'error');
+                }
+            } catch (e) {
+                this.notify('Network error connecting to API.', 'error');
+            } finally {
+                this.mismatchModal.busy = false;
             }
         },
 
