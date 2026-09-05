@@ -416,6 +416,11 @@
                         <option value="LTC">Litecoin (LTC)</option>
                         <option value="BTC">Bitcoin (BTC)</option>
                         <option value="ETH">Ethereum (ETH)</option>
+                        <optgroup label="Ethereum tokens">
+                            <option value="USDT">Tether (USDT)</option>
+                            <option value="USDC">USD Coin (USDC)</option>
+                            <option value="DAI">Dai (DAI)</option>
+                        </optgroup>
                     </select>
                 </div>
                 <div class="form-group">
@@ -451,6 +456,9 @@
             <div class="card">
                 <h2>Team Management</h2>
                 <button class="btn btn-secondary" @click="teamModal.open = true">+ Create New Team</button>
+                <div style="margin-top: 10px;">
+                    <button class="btn btn-secondary" @click="teamsModal.open = true">Edit Teams (Add/Remove Members)</button>
+                </div>
                 <div style="margin-top: 14px;">
                     <button class="btn btn-secondary btn-sm" @click="contractorModal.open = true">Manage Contractors</button>
                 </div>
@@ -470,11 +478,11 @@
                 <span style="font-size: 12px; font-weight: 600; color: var(--text-muted);">Quick Select:</span>
                 <button class="team-chip" @click="selectAll(true)">Select All</button>
                 <button class="team-chip" @click="selectAll(false)">Deselect All</button>
-                <template x-for="teamName in Object.keys(teamsMap)" :key="teamName">
+                <template x-for="team in teams" :key="team.id">
                     <button class="team-chip"
-                            :class="{active: filters.team === teamName}"
-                            @click="toggleTeamFilter(teamName)"
-                            x-text="teamName"></button>
+                            :class="{active: filters.team === team.name}"
+                            @click="toggleTeamFilter(team.name)"
+                            x-text="team.name"></button>
                 </template>
             </div>
 
@@ -619,6 +627,52 @@
     </div>
 </div>
 
+<!-- Modal: Edit Teams (add/remove members, delete team) -->
+<div class="modal-overlay" x-show="teamsModal.open" x-cloak>
+    <div class="modal" style="max-width: 620px;">
+        <div class="modal-header">
+            <h3>Edit Teams</h3>
+            <button class="btn btn-secondary btn-sm" @click="teamsModal.open = false">✕</button>
+        </div>
+        <template x-if="!teams.length">
+            <p style="font-size: 13px; color: var(--text-muted);">
+                No teams yet — use "+ Create New Team" first.
+            </p>
+        </template>
+        <div style="max-height: 60vh; overflow-y: auto;">
+            <template x-for="team in teams" :key="team.id">
+                <div class="card" style="margin-bottom: 12px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <strong x-text="team.name"></strong>
+                        <button class="btn btn-danger btn-sm" style="width: auto;" @click="deleteTeam(team)">Delete Team</button>
+                    </div>
+                    <div style="margin-bottom: 12px;">
+                        <template x-for="memberName in team.members" :key="memberName">
+                            <span class="contractor-tag">
+                                <span x-text="memberName"></span>
+                                <button @click="removeTeamMember(team, memberName)" title="Remove from team">✕</button>
+                            </span>
+                        </template>
+                        <span x-show="!team.members.length" style="font-size: 12px; color: var(--text-muted);">No members yet.</span>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <select x-model="team.pendingAdd" style="flex: 1;">
+                            <option value="">+ Add contractor…</option>
+                            <template x-for="c in contractors.filter(c => !team.members.map(m => m.toLowerCase()).includes(c.name.toLowerCase()))" :key="c.id">
+                                <option :value="c.name" x-text="c.name"></option>
+                            </template>
+                        </select>
+                        <button class="btn btn-secondary btn-sm" style="width: auto;" @click="addTeamMember(team)" :disabled="!team.pendingAdd">Add</button>
+                    </div>
+                </div>
+            </template>
+        </div>
+        <div class="flex-actions">
+            <button class="btn btn-secondary" @click="teamsModal.open = false">Close</button>
+        </div>
+    </div>
+</div>
+
 <!-- Modal: Manage Contractors -->
 <div class="modal-overlay" x-show="contractorModal.open" x-cloak>
     <div class="modal">
@@ -744,7 +798,7 @@ function app() {
     return {
         // Server-seeded state
         ledgers: safeParseSeed('ledgers-data', []),
-        teamsMap: safeParseSeed('teams-data', {}),
+        teams: safeParseSeed('teams-data', []).map(t => ({ ...t, pendingAdd: '' })),
         contractors: safeParseSeed('contractors-data', []),
         weeks: safeParseSeed('weeks-data', []),
         selectedWeek: (document.getElementById('selected-week-data')?.textContent || '').trim(),
@@ -763,6 +817,7 @@ function app() {
 
         approvalModal: { open: false, weekDate: '', overwrite: false, records: [], unknownContractors: [], existingContractors: [], mappings: {} },
         teamModal: { open: false, name: '', members: [] },
+        teamsModal: { open: false },
         contractorModal: { open: false },
         historyModal: { open: false, loading: false, name: '', totalOwed: 0, totalPaid: 0, history: [] },
         mismatchModal: {
@@ -803,7 +858,8 @@ function app() {
             }
 
             if (this.filters.team) {
-                const members = (this.teamsMap[this.filters.team] || []).map(m => m.toLowerCase());
+                const teamObj = this.teams.find(t => t.name === this.filters.team);
+                const members = (teamObj?.members || []).map(m => m.toLowerCase());
                 rows = rows.filter(r => members.includes(r.contractor.toLowerCase()));
             }
 
@@ -881,7 +937,7 @@ function app() {
         explorerUrl(symbol, hash) {
             if (!hash) return '#';
             const s = (symbol || '').toUpperCase();
-            if (s === 'ETH') return `https://etherscan.io/tx/${hash}`;
+            if (s === 'ETH' || s === 'USDT' || s === 'USDC' || s === 'DAI') return `https://etherscan.io/tx/${hash}`;
             if (s === 'BTC') return `https://blockstream.info/tx/${hash}`;
             if (s === 'LTC') return `https://blockchair.com/litecoin/transaction/${hash}`;
             return '#';
@@ -1222,21 +1278,89 @@ function app() {
         async submitCreateTeam() {
             if (!this.teamModal.name.trim()) { this.notify('Please provide a team name.', 'error'); return; }
             if (!this.teamModal.members.length) { this.notify('Please select at least one contractor.', 'error'); return; }
+            const teamName = this.teamModal.name.trim();
             try {
                 const res = await fetch('/api/teams', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ team_name: this.teamModal.name.trim(), contractor_names: this.teamModal.members })
+                    body: JSON.stringify({ team_name: teamName, contractor_names: this.teamModal.members })
                 });
-                if (res.ok) {
-                    if (!this.teamsMap[this.teamModal.name]) this.teamsMap[this.teamModal.name] = [];
-                    this.teamsMap[this.teamModal.name] = Array.from(new Set([...this.teamsMap[this.teamModal.name], ...this.teamModal.members]));
+                const data = await res.json();
+                if (res.ok && data.status === 'success') {
+                    const existing = this.teams.find(t => t.id === data.team_id);
+                    if (existing) {
+                        existing.members = Array.from(new Set([...existing.members, ...this.teamModal.members])).sort();
+                    } else {
+                        this.teams.push({ id: data.team_id, name: teamName, members: [...this.teamModal.members].sort(), pendingAdd: '' });
+                    }
                     this.notify('Team created.', 'success');
                     this.teamModal = { open: false, name: '', members: [] };
                 } else {
-                    this.notify('Failed to create team.', 'error');
+                    this.notify(data.message || 'Failed to create team.', 'error');
                 }
             } catch (e) {
                 this.notify('Error connecting to server.', 'error');
+            }
+        },
+
+        // ---------- team editing (add/remove members, delete team) ----------
+        async addTeamMember(team) {
+            const name = team.pendingAdd;
+            if (!name) return;
+            try {
+                const res = await fetch('/api/teams/add-member', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ team_id: team.id, contractor_name: name })
+                });
+                const data = await res.json();
+                if (res.ok && data.status === 'success') {
+                    if (!team.members.includes(name)) {
+                        team.members.push(name);
+                        team.members.sort();
+                    }
+                    team.pendingAdd = '';
+                    this.notify(`Added ${name} to ${team.name}.`, 'success');
+                } else {
+                    this.notify(data.message || 'Failed to add member.', 'error');
+                }
+            } catch (e) {
+                this.notify('Network error adding team member.', 'error');
+            }
+        },
+        async removeTeamMember(team, name) {
+            if (!confirm(`Remove ${name} from ${team.name}?`)) return;
+            try {
+                const res = await fetch('/api/teams/remove-member', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ team_id: team.id, contractor_name: name })
+                });
+                const data = await res.json();
+                if (res.ok && data.status === 'success') {
+                    team.members = team.members.filter(m => m !== name);
+                    this.notify(`Removed ${name} from ${team.name}.`, 'success');
+                } else {
+                    this.notify(data.message || 'Failed to remove member.', 'error');
+                }
+            } catch (e) {
+                this.notify('Network error removing team member.', 'error');
+            }
+        },
+        async deleteTeam(team) {
+            if (!confirm(`Delete team "${team.name}"? Contractors themselves are kept — this only removes the team grouping. This can't be undone.`)) return;
+            try {
+                const res = await fetch('/api/delete-team', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ team_id: team.id })
+                });
+                const data = await res.json();
+                if (res.ok && data.status === 'success') {
+                    this.teams = this.teams.filter(t => t.id !== team.id);
+                    if (this.filters.team === team.name) this.filters.team = '';
+                    this.notify(`Deleted team "${team.name}".`, 'success');
+                } else {
+                    this.notify(data.message || 'Failed to delete team.', 'error');
+                }
+            } catch (e) {
+                this.notify('Network error deleting team.', 'error');
             }
         },
 
