@@ -82,6 +82,11 @@ def init_db():
         cursor.execute("ALTER TABLE contractors ADD COLUMN IF NOT EXISTS credit_balance NUMERIC(12, 2) DEFAULT 0;")
         cursor.execute("UPDATE contractors SET credit_balance = 0 WHERE credit_balance IS NULL;")
 
+        # Waived contractors: their imported rows are auto-settled at $0 due
+        # (method WAIVED). Editable per contractor at any time.
+        cursor.execute("ALTER TABLE contractors ADD COLUMN IF NOT EXISTS is_waived BOOLEAN DEFAULT FALSE;")
+        cursor.execute("UPDATE contractors SET is_waived = FALSE WHERE is_waived IS NULL;")
+
         # Teams can hold a shared advance balance too: extra sent by a team
         # can be deducted against any member's rows.
         cursor.execute("ALTER TABLE teams ADD COLUMN IF NOT EXISTS credit_balance NUMERIC(12, 2) DEFAULT 0;")
