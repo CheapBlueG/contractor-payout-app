@@ -53,7 +53,7 @@ def money(v) -> float:
 
 LEDGER_SELECT = """
     SELECT l.id, l.week_date, c.id AS contractor_id, c.name AS contractor,
-           c.credit_balance,
+           c.credit_balance, COALESCE(c.is_waived, FALSE) AS is_waived,
            l.amount_owed_usd,
            COALESCE(l.credit_applied_usd, 0) AS credit_applied_usd,
            (l.amount_owed_usd - COALESCE(l.credit_applied_usd, 0)) AS net_due_usd,
@@ -229,7 +229,7 @@ async def index(request: Request, selected_week: str = None):
             print(f"Error fetching teams: {e}")
 
         try:
-            cursor.execute("SELECT id, name, COALESCE(credit_balance, 0) AS credit_balance FROM contractors ORDER BY name ASC")
+            cursor.execute("SELECT id, name, COALESCE(credit_balance, 0) AS credit_balance, COALESCE(is_waived, FALSE) AS is_waived FROM contractors ORDER BY name ASC")
             contractors = cursor.fetchall()
         except Exception as e:
             print(f"Error fetching contractors: {e}")
@@ -263,7 +263,7 @@ async def api_ledgers(week_date: str = None):
             row = cursor.fetchone()
             week_date = row["week_date"] if row else None
         ledgers = fetch_ledgers_for_week(cursor, week_date) if week_date else []
-        cursor.execute("SELECT id, name, COALESCE(credit_balance, 0) AS credit_balance FROM contractors ORDER BY name ASC")
+        cursor.execute("SELECT id, name, COALESCE(credit_balance, 0) AS credit_balance, COALESCE(is_waived, FALSE) AS is_waived FROM contractors ORDER BY name ASC")
         contractors = cursor.fetchall()
         cursor.execute("SELECT id, COALESCE(credit_balance, 0) AS credit_balance FROM teams")
         team_balances = {t["id"]: money(t["credit_balance"]) for t in cursor.fetchall()}
@@ -280,7 +280,7 @@ async def contractor_history(contractor_id: int):
     try:
         conn = get_db()
         cursor = db_cursor(conn)
-        cursor.execute("SELECT id, name, COALESCE(credit_balance, 0) AS credit_balance FROM contractors WHERE id = %s", (contractor_id,))
+        cursor.execute("SELECT id, name, COALESCE(credit_balance, 0) AS credit_balance, COALESCE(is_waived, FALSE) AS is_waived FROM contractors WHERE id = %s", (contractor_id,))
         contractor = cursor.fetchone()
         if not contractor:
             return JSONResponse(status_code=404, content={"status": "error", "message": "Contractor not found."})
@@ -302,6 +302,7 @@ async def contractor_history(contractor_id: int):
             "contractor": contractor["name"],
             "contractor_id": contractor["id"],
             "credit_balance": money(contractor["credit_balance"]),
+            "is_waived": bool(contractor["is_waived"]),
             "total_owed": money(total_owed),
             "total_paid": money(total_paid),
             "history": history,
@@ -360,12 +361,24 @@ def insert_week_rows(cursor, week_date: str, records, mappings=None):
         final_name = mappings.get(raw_name, raw_name).strip().lower()
         amount = float(r["profits"])
         cursor.execute("INSERT INTO contractors (name) VALUES (%s) ON CONFLICT (name) DO NOTHING", (final_name,))
-        cursor.execute("SELECT id FROM contractors WHERE name = %s", (final_name,))
-        cid = cursor.fetchone()["id"]
-        cursor.execute(
-            "INSERT INTO weekly_ledgers (week_date, contractor_id, amount_owed_usd, status, credit_applied_usd) VALUES (%s, %s, %s, 'UNPAID', 0)",
-            (week_date, cid, amount),
-        )
+        cursor.execute("SELECT id, COALESCE(is_waived, FALSE) AS is_waived FROM contractors WHERE name = %s", (final_name,))
+        row = cursor.fetchone()
+        cid, waived = row["id"], row["is_waived"]
+        if waived:
+            # Auto-settle: the owed figure is kept for the record, but the
+            # row lands settled with method WAIVED and nothing due.
+            cursor.execute(
+                """INSERT INTO weekly_ledgers
+                       (week_date, contractor_id, amount_owed_usd, status, credit_applied_usd,
+                        payment_method, amount_paid_usd, paid_at_est, notes)
+                   VALUES (%s, %s, %s, 'PAID', 0, 'WAIVED', 0, %s, %s)""",
+                (week_date, cid, amount, get_est_now(), "Payment waived for this contractor."),
+            )
+        else:
+            cursor.execute(
+                "INSERT INTO weekly_ledgers (week_date, contractor_id, amount_owed_usd, status, credit_applied_usd) VALUES (%s, %s, %s, 'UNPAID', 0)",
+                (week_date, cid, amount),
+            )
 
 
 @app.post("/api/upload")
@@ -779,6 +792,54 @@ async def team_credits(team_id: int):
 # --------------------------------------------------------------------------
 # Contractors / Teams / Weeks
 # --------------------------------------------------------------------------
+
+@app.post("/api/contractors/set-waived")
+async def set_waived(payload: dict = Body(...)):
+    contractor_id = payload.get("contractor_id")
+    waived = bool(payload.get("waived", False))
+    apply_now = bool(payload.get("apply_now", True))
+    if not contractor_id:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Contractor ID is required."})
+    conn = None
+    try:
+        conn = get_db()
+        cursor = db_cursor(conn)
+
+        # Self-heal: if this deploy started before the is_waived migration
+        # ran (or the column is otherwise missing), add it on demand rather
+        # than failing the whole request. Safe to run repeatedly.
+        cursor.execute("ALTER TABLE contractors ADD COLUMN IF NOT EXISTS is_waived BOOLEAN DEFAULT FALSE")
+
+        cursor.execute("UPDATE contractors SET is_waived = %s WHERE id = %s", (waived, contractor_id))
+        if cursor.rowcount == 0:
+            conn.rollback()
+            return JSONResponse(status_code=404, content={"status": "error", "message": "That contractor no longer exists."})
+
+        settled = 0
+        if waived and apply_now:
+            # Turning waive ON: auto-settle their still-unpaid rows now so the
+            # toggle affects existing weeks, not just future imports.
+            cursor.execute(
+                """UPDATE weekly_ledgers
+                   SET status = 'PAID', payment_method = 'WAIVED', amount_paid_usd = 0,
+                       credit_applied_usd = 0, paid_at_est = %s,
+                       notes = CONCAT_WS(' ', notes, %s)
+                   WHERE contractor_id = %s
+                     AND UPPER(COALESCE(status, 'UNPAID')) NOT IN ('PAID', 'MANUALLY_PAID')""",
+                (get_est_now(), "Payment waived for this contractor.", contractor_id),
+            )
+            settled = cursor.rowcount
+        conn.commit()
+        return {"status": "success", "waived": waived, "rows_settled": settled}
+    except Exception as err:
+        if conn:
+            conn.rollback()
+        print(f"set-waived failed for contractor {contractor_id} (waived={waived}): {err}")
+        return JSONResponse(status_code=500, content={"status": "error", "message": f"Server error while updating waive status: {err}"})
+    finally:
+        if conn:
+            conn.close()
+
 
 @app.post("/api/delete-contractor")
 async def delete_contractor(payload: dict = Body(...)):
