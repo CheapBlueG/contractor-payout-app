@@ -3,10 +3,13 @@ import csv
 import io
 import base64
 import json
+import hmac
+import hashlib
+import time
 from contextlib import asynccontextmanager
 
 import openai
-from fastapi import FastAPI, Request, File, UploadFile, Form, Body
+from fastapi import FastAPI, Request, File, UploadFile, Form, Body, Header
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
@@ -22,6 +25,51 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 MANUAL_METHODS = {"CASHAPP", "VENMO", "ZELLE", "CASH", "OTHER"}
 PAID_STATUSES = ("PAID", "MANUALLY_PAID")
 
+# --------------------------------------------------------------------------
+# Admin auth. There is NO login wall — anyone can use the site. A single
+# admin password (ADMIN_PASSWORD env var on Render) unlocks the handful of
+# sensitive actions. On success the client gets a signed token it sends
+# back on protected calls; the token carries no expiry, so admin stays
+# unlocked until the person logs out or closes the tab (the client drops
+# the token from sessionStorage on tab close).
+#
+# The signing secret defaults to a value derived from the password so the
+# token can't be forged without knowing it, but SESSION_SECRET can be set
+# explicitly on Render for extra safety.
+# --------------------------------------------------------------------------
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+SESSION_SECRET = os.getenv("SESSION_SECRET", "") or f"derived::{ADMIN_PASSWORD}"
+
+
+def _make_admin_token() -> str:
+    # Opaque, signed token. issued-at is included so tokens could be
+    # invalidated by rotating the secret if ever needed.
+    issued = str(int(time.time()))
+    sig = hmac.new(SESSION_SECRET.encode(), issued.encode(), hashlib.sha256).hexdigest()
+    return f"{issued}.{sig}"
+
+
+def _valid_admin_token(token: str) -> bool:
+    if not token or "." not in token:
+        return False
+    issued, _, sig = token.partition(".")
+    expected = hmac.new(SESSION_SECRET.encode(), issued.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(sig, expected)
+
+
+def require_admin(x_admin_token: str = Header(default="")):
+    """Returns an error JSONResponse if the caller isn't a valid admin, else
+    None. Every protected endpoint calls this first and returns the result
+    if it's truthy. Server-side enforcement means hiding a button in the UI
+    is never the only thing standing between a user and a gated action."""
+    if not ADMIN_PASSWORD:
+        return JSONResponse(status_code=503, content={"status": "error",
+            "message": "Admin actions are unavailable: ADMIN_PASSWORD isn't set on the server."})
+    if not _valid_admin_token(x_admin_token):
+        return JSONResponse(status_code=403, content={"status": "error",
+            "message": "This action requires admin. Log in as admin and try again."})
+    return None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -29,8 +77,27 @@ async def lifespan(app: FastAPI):
     yield
 
 
+
+
 app = FastAPI(lifespan=lifespan)
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+
+
+@app.post("/api/admin/login")
+async def admin_login(payload: dict = Body(...)):
+    if not ADMIN_PASSWORD:
+        return JSONResponse(status_code=503, content={"status": "error",
+            "message": "Admin login is unavailable: ADMIN_PASSWORD isn't set on the server."})
+    supplied = str(payload.get("password", ""))
+    # Constant-time compare to avoid leaking length/prefix via timing.
+    if not hmac.compare_digest(supplied, ADMIN_PASSWORD):
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Wrong password."})
+    return {"status": "success", "token": _make_admin_token()}
+
+
+@app.get("/api/admin/check")
+async def admin_check(x_admin_token: str = Header(default="")):
+    return {"status": "success", "is_admin": _valid_admin_token(x_admin_token), "admin_configured": bool(ADMIN_PASSWORD)}
 
 
 def db_cursor(conn):
@@ -382,7 +449,9 @@ def insert_week_rows(cursor, week_date: str, records, mappings=None):
 
 
 @app.post("/api/upload")
-async def upload_weekly_image(file: UploadFile = File(...), week_date: str = Form(...), overwrite: bool = Form(False)):
+async def upload_weekly_image(file: UploadFile = File(...), week_date: str = Form(...), overwrite: bool = Form(False), x_admin_token: str = Header(default="")):
+    denied = require_admin(x_admin_token)
+    if denied: return denied
     clean_week_date = week_date.strip()
     conn = None
     try:
@@ -433,7 +502,9 @@ async def upload_weekly_image(file: UploadFile = File(...), week_date: str = For
 
 
 @app.post("/api/confirm-upload")
-async def confirm_upload(payload: dict = Body(...)):
+async def confirm_upload(payload: dict = Body(...), x_admin_token: str = Header(default="")):
+    denied = require_admin(x_admin_token)
+    if denied: return denied
     week_date = payload.get("week_date")
     records = payload.get("records", [])
     if not week_date or not records:
@@ -481,12 +552,16 @@ def allocate_paid_amounts(rows, total_paid: float):
 
 
 @app.post("/api/mark-paid-manual")
-async def mark_paid_manual(payload: dict = Body(...)):
+async def mark_paid_manual(payload: dict = Body(...), x_admin_token: str = Header(default="")):
     ledger_ids = [int(x) for x in payload.get("ledger_ids", [])]
     method = str(payload.get("method", "OTHER")).strip().upper()
     notes = str(payload.get("notes", "") or "").strip()
     override = bool(payload.get("override", False))
     bank_excess = bool(payload.get("bank_excess", False))
+    # Banking an overpayment as advance credit is admin-only. Recording the
+    # payment itself is not — a non-admin can still record it, the excess
+    # just won't be banked (it's noted instead).
+    is_admin = _valid_admin_token(x_admin_token)
     try:
         amount_paid = money(payload.get("amount_paid"))
     except (TypeError, ValueError):
@@ -516,12 +591,12 @@ async def mark_paid_manual(payload: dict = Body(...)):
 
         excess_credited = 0.0
         if difference > tolerance:
-            if bank_excess and len(contractor_ids) == 1:
+            if bank_excess and is_admin and len(contractor_ids) == 1:
                 cid = next(iter(contractor_ids))
                 add_credit(cursor, "contractor", cid, difference, f"Overpaid via {method} ({notes})" if notes else f"Overpaid via {method}")
                 excess_credited = difference
-            # With several contractors in one payment there's no fair way to
-            # attribute the excess, so it's recorded in the notes instead.
+            # If not banked (non-admin, not requested, or several contractors),
+            # the excess is recorded in the notes instead.
 
         now_est = get_est_now()
         shares = allocate_paid_amounts(rows, amount_paid)
@@ -557,9 +632,13 @@ async def reconcile_crypto(
     override: bool = Body(False),
     override_note: str = Body(""),
     bank_excess: bool = Body(False),
+    x_admin_token: str = Header(default=""),
 ):
     if not ledger_ids or not tx_id:
         return JSONResponse(status_code=400, content={"status": "error", "message": "Select rows and paste a transaction first."})
+    # Banking a crypto overpayment as advance credit is admin-only; the
+    # payment itself is not gated.
+    is_admin = _valid_admin_token(x_admin_token)
 
     # Detect the coin from the pasted link when it's unambiguous. Only
     # override across chain families: ETH/USDT/USDC/DAI all share
@@ -630,7 +709,7 @@ async def reconcile_crypto(
         notes_value = None
         if override_applied:
             if difference > 0:
-                if bank_excess and len(contractor_ids) == 1:
+                if bank_excess and is_admin and len(contractor_ids) == 1:
                     cid = next(iter(contractor_ids))
                     add_credit(cursor, "contractor", cid, difference, f"Overpaid via {effective_symbol} tx {clean_hash[:12]}…")
                     excess_credited = difference
@@ -794,7 +873,9 @@ async def team_credits(team_id: int):
 # --------------------------------------------------------------------------
 
 @app.post("/api/contractors/set-waived")
-async def set_waived(payload: dict = Body(...)):
+async def set_waived(payload: dict = Body(...), x_admin_token: str = Header(default="")):
+    denied = require_admin(x_admin_token)
+    if denied: return denied
     contractor_id = payload.get("contractor_id")
     waived = bool(payload.get("waived", False))
     apply_now = bool(payload.get("apply_now", True))
@@ -842,7 +923,9 @@ async def set_waived(payload: dict = Body(...)):
 
 
 @app.post("/api/delete-contractor")
-async def delete_contractor(payload: dict = Body(...)):
+async def delete_contractor(payload: dict = Body(...), x_admin_token: str = Header(default="")):
+    denied = require_admin(x_admin_token)
+    if denied: return denied
     contractor_id = payload.get("contractor_id")
     if not contractor_id:
         return JSONResponse(status_code=400, content={"status": "error", "message": "Contractor ID is required."})
@@ -862,7 +945,9 @@ async def delete_contractor(payload: dict = Body(...)):
 
 
 @app.post("/api/delete-week")
-async def delete_week(payload: dict = Body(...)):
+async def delete_week(payload: dict = Body(...), x_admin_token: str = Header(default="")):
+    denied = require_admin(x_admin_token)
+    if denied: return denied
     week_date = payload.get("week_date")
     if not week_date:
         return JSONResponse(status_code=400, content={"status": "error", "message": "Week date is required."})
@@ -947,7 +1032,9 @@ async def remove_team_member(payload: dict = Body(...)):
 
 
 @app.post("/api/delete-team")
-async def delete_team(payload: dict = Body(...)):
+async def delete_team(payload: dict = Body(...), x_admin_token: str = Header(default="")):
+    denied = require_admin(x_admin_token)
+    if denied: return denied
     team_id = payload.get("team_id")
     if not team_id:
         return JSONResponse(status_code=400, content={"status": "error", "message": "team_id is required."})
