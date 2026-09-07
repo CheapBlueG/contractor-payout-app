@@ -119,6 +119,7 @@ tr.paid td .name{color:var(--text)}
 .m-ZELLE .g{background:#6D1ED4;color:#fff}.m-ZELLE{color:#B48BF5}
 .m-CASH .g,.m-OTHER .g{background:#5F6C80;color:#fff}.m-CASH,.m-OTHER{color:#B8C2D1}
 .m-CREDIT .g{background:var(--amber);color:#1a1200}.m-CREDIT{color:var(--amber)}
+.m-WAIVED .g{background:#5F6C80;color:#fff}.m-WAIVED{color:#B8C2D1}
 
 .selbar{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;width:min(960px,calc(100% - 24px));
   background:#0A0F17;border:1px solid var(--rule);border-radius:14px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
@@ -185,6 +186,7 @@ tr.paid td .name{color:var(--text)}
       <span>Week total <b x-text="fmt(totalWeek)"></b></span>
       <span><b x-text="paidCount"></b> of <b x-text="ledgers.length"></b> settled</span>
       <span x-show="totalCreditApplied>0">Covered by advance credit <b x-text="fmt(totalCreditApplied)"></b></span>
+      <span x-show="totalWaived>0">Waived <b x-text="fmt(totalWaived)"></b></span>
     </div>
   </div>
 
@@ -268,7 +270,7 @@ tr.paid td .name{color:var(--text)}
                     <span x-text="fmt(item.amount_owed_usd)"></span>
                   </template>
                 </td>
-                <td><span class="status" :class="isPaid(item.status)?'paid':'due'" x-text="isPaid(item.status)?'Settled':'Owes'"></span></td>
+                <td><span class="status" :class="isPaid(item.status)?'paid':'due'" x-text="item.payment_method==='WAIVED'?'Waived':(isPaid(item.status)?'Settled':'Owes')"></span></td>
                 <td>
                   <template x-if="item.payment_method">
                     <button class="method" :class="'m-'+item.payment_method" @click="openDetails(item)" title="View payment details">
@@ -571,12 +573,13 @@ tr.paid td .name{color:var(--text)}
     <div class="mhead"><h3>Contractors &amp; advance balances</h3><button class="x" @click="contractorModal.open=false">✕</button></div>
     <div class="tablewrap" style="max-height:60vh;overflow:auto">
       <table>
-        <thead><tr><th class="nosort">Contractor</th><th class="nosort">Advance balance</th><th class="nosort"></th></tr></thead>
+        <thead><tr><th class="nosort">Contractor</th><th class="nosort">Advance balance</th><th class="nosort">Waive payments</th><th class="nosort"></th></tr></thead>
         <tbody>
           <template x-for="c in contractors" :key="c.id">
             <tr>
-              <td><button class="name" @click="contractorModal.open=false;openHistory(c.id,c.name)" x-text="c.name"></button></td>
+              <td><button class="name" @click="contractorModal.open=false;openHistory(c.id,c.name)" x-text="c.name"></button><span x-show="c.is_waived" class="credit-pill" style="background:#5F6C80;color:#fff" title="Payments waived">waived</span></td>
               <td class="amt" :style="Number(c.credit_balance)>0?'color:var(--amber)':'color:var(--faint)'" x-text="fmt(c.credit_balance)"></td>
+              <td><button class="btn sm" @click="toggleWaive(c)" x-text="c.is_waived?'Waived — turn off':'Waive'"></button></td>
               <td style="text-align:right"><button class="btn sm danger" @click="deleteContractor(c.id,c.name)">Delete</button></td>
             </tr>
           </template>
@@ -598,6 +601,11 @@ tr.paid td .name{color:var(--text)}
           <div><div class="l">Advance balance</div><div class="v" :style="history.creditBalance>0?'color:var(--amber)':''" x-text="fmt(history.creditBalance)"></div></div>
         </div>
 
+        <div class="card" style="margin:0 0 12px;background:var(--ink);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+          <div><strong x-text="history.isWaived?'Payments are waived':'Payments not waived'"></strong>
+            <div class="hint" style="margin-top:2px" x-text="history.isWaived?'Imported rows auto-settle at $0 owed.':'This contractor is billed normally.'"></div></div>
+          <button class="btn sm" @click="toggleWaiveHistory()" x-text="history.isWaived?'Turn off waive':'Waive payments'"></button>
+        </div>
         <div class="card" style="margin:0 0 12px;background:var(--ink)">
           <h2 style="font-size:13px">They sent extra</h2>
           <div class="row2">
@@ -662,7 +670,7 @@ const METHODS = {
   BTC:{label:'BTC',g:'₿'}, LTC:{label:'LTC',g:'Ł'}, ETH:{label:'ETH',g:'Ξ'},
   USDT:{label:'USDT',g:'T'}, USDC:{label:'USDC',g:'C'}, DAI:{label:'DAI',g:'D'},
   CASHAPP:{label:'Cash App',g:'$'}, VENMO:{label:'Venmo',g:'V'}, ZELLE:{label:'Zelle',g:'Z'},
-  CASH:{label:'Cash',g:'¢'}, OTHER:{label:'Other',g:'•'}, CREDIT:{label:'Advance credit',g:'↺'},
+  CASH:{label:'Cash',g:'¢'}, OTHER:{label:'Other',g:'•'}, CREDIT:{label:'Advance credit',g:'↺'}, WAIVED:{label:'Waived',g:'✕'},
 };
 function app(){
   return {
@@ -684,7 +692,7 @@ function app(){
     advance:{open:false,source:'',amount:'',note:'',busy:false},
     approval:{open:false,weekDate:'',overwrite:false,records:[],unknown:[],existing:[],mappings:{}},
     teamModal:{open:false,name:'',members:[]}, teamsModal:{open:false}, contractorModal:{open:false},
-    history:{open:false,loading:false,id:null,name:'',totalOwed:0,totalPaid:0,creditBalance:0,rows:[],credits:[],advanceAmount:'',advanceNote:''},
+    history:{open:false,loading:false,id:null,name:'',totalOwed:0,totalPaid:0,creditBalance:0,isWaived:false,rows:[],credits:[],advanceAmount:'',advanceNote:''},
 
     init(){ this.$watch('selectedIds',()=>this.debouncedRefreshEstimate()); },
 
@@ -713,7 +721,8 @@ function app(){
       return rows;
     },
     get totalWeek(){ return this.ledgers.reduce((s,r)=>s+Number(r.amount_owed_usd),0); },
-    get totalPaid(){ return this.ledgers.filter(r=>this.isPaid(r.status)).reduce((s,r)=>s+Number(r.amount_owed_usd),0); },
+    get totalPaid(){ return this.ledgers.filter(r=>this.isPaid(r.status)&&r.payment_method!=='WAIVED').reduce((s,r)=>s+Number(r.amount_owed_usd),0); },
+    get totalWaived(){ return this.ledgers.filter(r=>r.payment_method==='WAIVED').reduce((s,r)=>s+Number(r.amount_owed_usd),0); },
     get totalCreditApplied(){ return this.ledgers.reduce((s,r)=>s+Number(r.credit_applied_usd||0),0); },
     get totalOutstanding(){ return this.ledgers.filter(r=>!this.isPaid(r.status)).reduce((s,r)=>s+Number(r.net_due_usd ?? r.amount_owed_usd),0); },
     get pctPaid(){ return this.totalWeek? Math.min(100,Math.round((this.totalWeek-this.totalOutstanding)/this.totalWeek*100)) : 0; },
@@ -850,6 +859,14 @@ function app(){
       finally{ this.mismatch.busy=false; }
     },
 
+    async toggleWaiveHistory(){
+      const turningOn=!this.history.isWaived;
+      if(turningOn && !confirm(`Waive all payments for "${this.history.name}"? Unpaid rows will be settled now and future imports auto-settle at $0 owed.`)) return;
+      try{ const res=await this.post('/api/contractors/set-waived',{contractor_id:this.history.id,waived:turningOn,apply_now:true}); const d=await res.json();
+        if(res.ok&&d.status==='success'){ this.history.isWaived=d.waived; const c=this.contractors.find(x=>x.id===this.history.id); if(c) c.is_waived=d.waived; this.notify(turningOn?`Waived${d.rows_settled?` — ${d.rows_settled} row${d.rows_settled===1?'':'s'} settled`:''}.`:'No longer waived.','success'); await this.openHistory(this.history.id,this.history.name); await this.refreshLedgers(); }
+        else this.notify(d.message||"Couldn't update that.",'error');
+      }catch(e){ this.notify('Network error.','error'); }
+    },
     async addAdvance(){
       try{ const res=await this.post('/api/credits/add',{contractor_id:this.history.id,amount:Number(this.history.advanceAmount),note:this.history.advanceNote}); const d=await res.json();
         if(res.ok&&d.status==='success'){ this.notify(`Advance balance is now ${this.fmt(d.credit_balance)}.`,'success'); this.history.advanceAmount=''; this.history.advanceNote=''; await this.openHistory(this.history.id,this.history.name); await this.refreshLedgers(); }
@@ -908,6 +925,14 @@ function app(){
         if(res.ok&&d.status==='success'){ this.teams=this.teams.filter(t=>t.id!==team.id); if(this.filters.team===team.name) this.filters.team=''; this.notify(`Deleted "${team.name}".`,'success'); } else this.notify(d.message||"Couldn't delete it.",'error');
       }catch(e){ this.notify('Network error.','error'); } },
 
+    async toggleWaive(c){
+      const turningOn=!c.is_waived;
+      if(turningOn && !confirm(`Waive all payments for "${c.name}"? Their imported rows will auto-settle at $0 owed, and any currently unpaid rows will be settled now. You can turn this off later.`)) return;
+      try{ const res=await this.post('/api/contractors/set-waived',{contractor_id:c.id,waived:turningOn,apply_now:true}); const d=await res.json();
+        if(res.ok&&d.status==='success'){ c.is_waived=d.waived; this.notify(turningOn?`"${c.name}" waived${d.rows_settled?` — ${d.rows_settled} unpaid row${d.rows_settled===1?'':'s'} settled`:''}.`:`"${c.name}" no longer waived.`,'success'); await this.refreshLedgers(); }
+        else this.notify(d.message||"Couldn't update that.",'error');
+      }catch(e){ this.notify('Network error.','error'); }
+    },
     async deleteContractor(id,name){ if(!confirm(`Delete "${name}" and all their ledger history? This can't be undone.`)) return;
       try{ const res=await this.post('/api/delete-contractor',{contractor_id:id});
         if(res.ok){ this.contractors=this.contractors.filter(c=>c.id!==id); this.ledgers=this.ledgers.filter(r=>r.contractor_id!==id); this.notify('Contractor deleted.','success'); } else this.notify("Couldn't delete.",'error');
@@ -915,7 +940,7 @@ function app(){
     async openHistory(id,name){
       this.history={...this.history,open:true,loading:true,id,name,rows:[],credits:[]};
       try{ const res=await fetch(`/api/contractor-history/${id}`); const d=await res.json();
-        if(d.status==='success'){ this.history={...this.history,loading:false,name:d.contractor,id:d.contractor_id,totalOwed:d.total_owed,totalPaid:d.total_paid,creditBalance:d.credit_balance,rows:d.history,credits:d.credit_history}; }
+        if(d.status==='success'){ this.history={...this.history,loading:false,name:d.contractor,id:d.contractor_id,totalOwed:d.total_owed,totalPaid:d.total_paid,creditBalance:d.credit_balance,isWaived:!!d.is_waived,rows:d.history,credits:d.credit_history}; }
         else { this.notify(d.message||"Couldn't load history.",'error'); this.history.open=false; }
       }catch(e){ this.notify("Couldn't load history.",'error'); this.history.open=false; }
     },
