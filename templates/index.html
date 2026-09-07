@@ -167,12 +167,15 @@ tr.paid td .name{color:var(--text)}
       <div class="sub">Who still owes this week, what came in, and how.</div>
     </div>
     <div class="week-controls">
+      <template x-if="!isAdmin"><button class="btn sm" @click="adminModal.open=true" title="Unlock admin-only actions">Admin login</button></template>
+      <template x-if="isAdmin"><span class="chip on" style="cursor:default">Admin</span></template>
+      <template x-if="isAdmin"><button class="btn sm" @click="adminLogout()">Log out</button></template>
       <select style="width:auto" x-model="selectedWeek" @change="loadWeek(selectedWeek)">
         <template x-for="w in weeks" :key="w"><option :value="w" x-text="w"></option></template>
       </select>
       <button class="btn sm" @click="openAdvance()">Advance credit</button>
       <a class="btn sm" x-show="selectedWeek" :href="'/api/export-csv?week_date='+encodeURIComponent(selectedWeek)">Export CSV</a>
-      <button class="btn sm danger" x-show="selectedWeek" @click="deleteCurrentWeek()">Delete week</button>
+      <button class="btn sm danger" x-show="selectedWeek && isAdmin" @click="deleteCurrentWeek()">Delete week</button>
     </div>
   </div>
 
@@ -192,7 +195,11 @@ tr.paid td .name{color:var(--text)}
 
   <div class="grid">
     <div>
-      <div class="card">
+      <div class="card" x-show="!isAdmin">
+        <h2>Import a week</h2>
+        <p class="hint" style="font-size:13px;color:var(--muted);margin:0">Importing a week is an admin action. <button class="linkish" @click="adminModal.open=true">Log in as admin</button> to import.</p>
+      </div>
+      <div class="card" x-show="isAdmin">
         <h2>Import a week</h2>
         <div class="field">
           <label>Week (Monday–Sunday)</label>
@@ -368,7 +375,8 @@ tr.paid td .name{color:var(--text)}
         <template x-if="manualDiff<-0.009"><span>That's <b class="mono" x-text="fmt(-manualDiff)"></b> short — you'll be asked to confirm.</span></template>
         <template x-if="Math.abs(manualDiff)<=0.009"><span>Matches what's due.</span></template>
       </div>
-      <label class="check field" x-show="selectedContractorCount===1 && manualDiff>0.009"><input type="checkbox" x-model="manual.bankExcess"> Keep the extra <b class="mono" x-text="fmt(manualDiff)"></b> on their advance balance</label>
+      <label class="check field" x-show="isAdmin && selectedContractorCount===1 && manualDiff>0.009"><input type="checkbox" x-model="manual.bankExcess"> Keep the extra <b class="mono" x-text="fmt(manualDiff)"></b> on their advance balance</label>
+      <div class="hint" x-show="!isAdmin && selectedContractorCount===1 && manualDiff>0.009">Banking the extra as advance credit is an admin action; it'll be noted on the row instead.</div>
       <div class="actions">
         <button class="btn primary" :disabled="manual.busy||!manual.amount" @click="markPaidManual()" x-text="manual.busy?'Saving…':'Record payment'"></button>
       </div>
@@ -458,7 +466,7 @@ tr.paid td .name{color:var(--text)}
       <div><div class="l">Received</div><div class="v" x-text="fmt(mismatch.receivedUsd)"></div></div>
       <div><div class="l" x-text="mismatch.difference<0?'Short by':'Over by'"></div><div class="v" :style="mismatch.difference<0?'color:var(--red)':'color:var(--amber)'" x-text="fmt(Math.abs(mismatch.difference))"></div></div>
     </div>
-    <label class="check field" x-show="mismatch.difference>0 && mismatch.singleContractor"><input type="checkbox" x-model="mismatch.bankExcess"> Keep the extra <b x-text="fmt(mismatch.difference)"></b> on their advance balance</label>
+    <label class="check field" x-show="isAdmin && mismatch.difference>0 && mismatch.singleContractor"><input type="checkbox" x-model="mismatch.bankExcess"> Keep the extra <b x-text="fmt(mismatch.difference)"></b> on their advance balance</label>
     <div class="hint" x-show="mismatch.difference>0 && !mismatch.singleContractor">Several contractors are in this selection, so the extra can't go on one balance — it'll be noted instead.</div>
     <div class="field" style="margin-top:8px">
       <label>Note (saved on the rows)</label>
@@ -544,7 +552,7 @@ tr.paid td .name{color:var(--text)}
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px;flex-wrap:wrap">
             <div><strong x-text="team.name"></strong>
               <span class="credit-pill" x-show="Number(team.credit_balance)>0" x-text="fmt(team.credit_balance)+' advance'"></span></div>
-            <button class="btn sm danger" @click="deleteTeam(team)">Delete team</button>
+            <button class="btn sm danger" x-show="isAdmin" @click="deleteTeam(team)">Delete team</button>
           </div>
           <div class="row2" style="margin-bottom:10px">
             <input type="number" step="0.01" min="0" x-model="team.pendingCredit" placeholder="Team sent extra (USD)">
@@ -579,8 +587,8 @@ tr.paid td .name{color:var(--text)}
             <tr>
               <td><button class="name" @click="contractorModal.open=false;openHistory(c.id,c.name)" x-text="c.name"></button><span x-show="c.is_waived" class="credit-pill" style="background:#5F6C80;color:#fff" title="Payments waived">waived</span></td>
               <td class="amt" :style="Number(c.credit_balance)>0?'color:var(--amber)':'color:var(--faint)'" x-text="fmt(c.credit_balance)"></td>
-              <td><button class="btn sm" @click="toggleWaive(c)" x-text="c.is_waived?'Waived — turn off':'Waive'"></button></td>
-              <td style="text-align:right"><button class="btn sm danger" @click="deleteContractor(c.id,c.name)">Delete</button></td>
+              <td><button class="btn sm" x-show="isAdmin" @click="toggleWaive(c)" x-text="c.is_waived?'Waived — turn off':'Waive'"></button><span x-show="!isAdmin" style="color:var(--faint);font-size:12px">admin only</span></td>
+              <td style="text-align:right"><button class="btn sm danger" x-show="isAdmin" @click="deleteContractor(c.id,c.name)">Delete</button></td>
             </tr>
           </template>
         </tbody>
@@ -604,7 +612,7 @@ tr.paid td .name{color:var(--text)}
         <div class="card" style="margin:0 0 12px;background:var(--ink);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
           <div><strong x-text="history.isWaived?'Payments are waived':'Payments not waived'"></strong>
             <div class="hint" style="margin-top:2px" x-text="history.isWaived?'Imported rows auto-settle at $0 owed.':'This contractor is billed normally.'"></div></div>
-          <button class="btn sm" @click="toggleWaiveHistory()" x-text="history.isWaived?'Turn off waive':'Waive payments'"></button>
+          <button class="btn sm" x-show="isAdmin" @click="toggleWaiveHistory()" x-text="history.isWaived?'Turn off waive':'Waive payments'"></button><span x-show="!isAdmin" style="color:var(--faint);font-size:12px">admin only</span>
         </div>
         <div class="card" style="margin:0 0 12px;background:var(--ink)">
           <h2 style="font-size:13px">They sent extra</h2>
@@ -657,6 +665,21 @@ tr.paid td .name{color:var(--text)}
   </div>
 </div>
 
+<div class="overlay" x-show="adminModal.open" x-cloak @keydown.escape.window="adminModal.open=false">
+  <div class="modal" style="max-width:380px">
+    <div class="mhead"><h3>Admin login</h3><button class="x" @click="adminModal.open=false">✕</button></div>
+    <p style="color:var(--muted);margin:0 0 12px;font-size:13px">Unlocks importing, deletes, waive, and banking advance credit. Stays unlocked until you log out or close the tab.</p>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" x-model="adminModal.password" @keydown.enter="adminLogin()" placeholder="Admin password" autofocus>
+    </div>
+    <div class="actions">
+      <button class="btn primary" :disabled="adminModal.busy||!adminModal.password" @click="adminLogin()" x-text="adminModal.busy?'Checking…':'Log in'"></button>
+      <button class="btn" @click="adminModal.open=false">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div class="toasts">
   <template x-for="t in toasts" :key="t.id"><div class="toast" :class="t.type" x-text="t.message"></div></template>
 </div>
@@ -681,6 +704,7 @@ function app(){
     selectedWeek: (document.getElementById('selected-week-data')?.textContent||'').trim(),
 
     selectedIds:[], filters:{search:'',status:'all',team:''}, sortKey:'contractor', sortDir:'asc', toasts:[],
+    isAdmin:false, adminToken:'', adminModal:{open:false,password:'',busy:false},
     upload:{pickedDate:'',weekDate:'',overwrite:false,file:null,fileName:'',previewSrc:null,dragOver:false,busy:false},
     pay:{open:false,tab:'crypto'},
     crypto:{symbol:'BTC',txInput:'',busy:false},
@@ -694,7 +718,26 @@ function app(){
     teamModal:{open:false,name:'',members:[]}, teamsModal:{open:false}, contractorModal:{open:false},
     history:{open:false,loading:false,id:null,name:'',totalOwed:0,totalPaid:0,creditBalance:0,isWaived:false,rows:[],credits:[],advanceAmount:'',advanceNote:''},
 
-    init(){ this.$watch('selectedIds',()=>this.debouncedRefreshEstimate()); },
+    init(){
+      this.$watch('selectedIds',()=>this.debouncedRefreshEstimate());
+      // sessionStorage clears when the tab closes, so admin never persists
+      // beyond the browsing session — matches "until logout or tab close".
+      try{ this.adminToken = sessionStorage.getItem('adminToken')||''; }catch(_){}
+      if(this.adminToken) this.verifyAdmin();
+    },
+    async verifyAdmin(){
+      try{ const res=await fetch('/api/admin/check',{headers:{'X-Admin-Token':this.adminToken}}); const d=await res.json();
+        this.isAdmin=!!d.is_admin; if(!d.is_admin){ this.adminToken=''; try{sessionStorage.removeItem('adminToken');}catch(_){} }
+      }catch(e){ this.isAdmin=false; }
+    },
+    async adminLogin(){
+      if(!this.adminModal.password) return; this.adminModal.busy=true;
+      try{ const res=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:this.adminModal.password})}); const d=await res.json();
+        if(res.ok&&d.status==='success'){ this.adminToken=d.token; this.isAdmin=true; try{sessionStorage.setItem('adminToken',d.token);}catch(_){} this.adminModal={open:false,password:'',busy:false}; this.notify('Admin unlocked.','success'); }
+        else this.notify(d.message||'Wrong password.','error');
+      }catch(e){ this.notify('Network error.','error'); } finally{ this.adminModal.busy=false; }
+    },
+    adminLogout(){ this.adminToken=''; this.isAdmin=false; try{sessionStorage.removeItem('adminToken');}catch(_){} this.notify('Logged out of admin.','info'); },
 
     fmt(v){ const n=Number(v||0); return '$'+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); },
     isPaid(s){ const u=(s||'').toUpperCase(); return u==='PAID'||u==='MANUALLY_PAID'; },
@@ -708,7 +751,7 @@ function app(){
     async copyText(t){ try{ await navigator.clipboard.writeText(t); this.notify('Copied.','success'); }catch(e){ this.notify("Couldn't copy — select it manually.",'error'); } },
     async fetchWithTimeout(url,options={},timeoutMs=60000){ const c=new AbortController(); const t=setTimeout(()=>c.abort(),timeoutMs);
       try{ return await fetch(url,{...options,signal:c.signal}); } finally{ clearTimeout(t); } },
-    post(url,body){ return this.fetchWithTimeout(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); },
+    post(url,body){ const headers={'Content-Type':'application/json'}; if(this.adminToken) headers['X-Admin-Token']=this.adminToken; return this.fetchWithTimeout(url,{method:'POST',headers,body:JSON.stringify(body)}); },
 
     get filteredLedgers(){
       let rows=this.ledgers.slice();
@@ -795,7 +838,8 @@ function app(){
     async submitUpload(){
       const fd=new FormData(); fd.append('file',this.upload.file); fd.append('week_date',this.upload.weekDate.trim()); fd.append('overwrite',this.upload.overwrite);
       this.upload.busy=true;
-      try{ const res=await this.fetchWithTimeout('/api/upload',{method:'POST',body:fd},120000); const d=await res.json();
+      try{ const upHeaders={}; if(this.adminToken) upHeaders['X-Admin-Token']=this.adminToken;
+        const res=await this.fetchWithTimeout('/api/upload',{method:'POST',body:fd,headers:upHeaders},120000); const d=await res.json();
         if(res.ok&&d.status==='success'){ this.notify(`Imported ${d.extracted_count} rows.`,'success'); if(!this.weeks.includes(d.week_date)) this.weeks.unshift(d.week_date); await this.loadWeek(d.week_date); this.resetUpload(); }
         else if(d.status==='approval_required'){ this.approval={open:true,weekDate:d.week_date,overwrite:d.overwrite,records:d.records,unknown:d.unknown_contractors,existing:d.existing_contractors,mappings:{}}; }
         else this.notify(d.message||"Couldn't read that image.",'error');
