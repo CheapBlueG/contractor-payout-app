@@ -6,6 +6,7 @@ import json
 import hmac
 import hashlib
 import time
+import math
 from contextlib import asynccontextmanager
 
 import openai
@@ -519,11 +520,15 @@ def _ingest_records(cursor, clean_week_date, records, overwrite):
 
 
 def insert_week_rows(cursor, week_date: str, records, mappings=None):
+    import math
     mappings = mappings or {}
     for r in records:
         raw_name = str(r["contractor"]).strip().lower()
         final_name = mappings.get(raw_name, raw_name).strip().lower()
-        amount = float(r["profits"])
+        # Round the owed amount UP to the next whole dollar on import
+        # (ceiling): 517.08 -> 518, 517.00 -> 517, 0 -> 0. Applies to every
+        # import path since they all funnel through here.
+        amount = float(math.ceil(float(r["profits"]) - 1e-9))
         cursor.execute("INSERT INTO contractors (name) VALUES (%s) ON CONFLICT (name) DO NOTHING", (final_name,))
         cursor.execute("SELECT id, COALESCE(is_waived, FALSE) AS is_waived FROM contractors WHERE name = %s", (final_name,))
         row = cursor.fetchone()
