@@ -468,15 +468,57 @@ async def upload_weekly_image(file: UploadFile = File(...), week_date: str = For
         contents = await file.read()
         base64_image = base64.b64encode(contents).decode("utf-8")
         client = openai.OpenAI(api_key=OPENAI_API_KEY)
+
+        ocr_prompt = (
+            "You are extracting a payroll table from an image. Each row is one contractor "
+            "with a name and a Profits dollar amount (there may also be Cut, Tickets, and "
+            "Revenue columns — ignore those; only capture the name and the Profits value).\n\n"
+            "CRITICAL COMPLETENESS RULES:\n"
+            "- Extract EVERY single row, top to bottom. Do not skip, summarize, or truncate. "
+            "Long tables (50+ rows) must be returned in full.\n"
+            "- Go row by row in order. Do not merge or deduplicate rows even if names look similar.\n"
+            "- If the image shows a total row count anywhere (e.g. a footer like '52 total'), "
+            "return that number as 'stated_total'.\n"
+            "- Include rows whose Profits value is 0.\n"
+            "- Names are lowercase; keep them exactly as written (including trailing digits, "
+            "e.g. 'kenzo1', 'beskarworker3').\n"
+            "- 'profits' must be a number only: strip '$' and commas (e.g. \"$7,517.50\" -> 752.00 "
+            "is WRONG; use the Profits column value like 752.00).\n\n"
+            'Return strict JSON: {"records": [{"contractor": "name", "profits": number}], '
+            '"stated_total": number_or_null, "extracted_count": number}. '
+            "extracted_count MUST equal the length of records."
+        )
+
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",  # full vision model — mini drops rows on long, dense tables
             response_format={"type": "json_object"},
+            temperature=0,
+            max_tokens=8000,  # ~52 rows of JSON needs generous headroom so output isn't cut off
             messages=[{"role": "user", "content": [
-                {"type": "text", "text": "Extract table data from image. Return JSON format: {\"records\": [{\"contractor\": \"lowercase name\", \"profits\": numeric_amount}]}"},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}},
+                {"type": "text", "text": ocr_prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}", "detail": "high"}},
             ]}],
         )
-        records = json.loads(response.choices[0].message.content).get("records", [])
+        parsed = json.loads(response.choices[0].message.content)
+        records = parsed.get("records", [])
+        # Drop any malformed/blank rows the model might emit.
+        records = [r for r in records if str(r.get("contractor", "")).strip()]
+
+        stated_total = parsed.get("stated_total")
+        try:
+            stated_total = int(stated_total) if stated_total is not None else None
+        except (TypeError, ValueError):
+            stated_total = None
+        # Surface a warning (not a hard failure) if the image declared a row
+        # count and we came up short — that's the signal rows were dropped.
+        count_warning = None
+        if stated_total and len(records) < stated_total:
+            count_warning = (
+                f"The image says {stated_total} rows but only {len(records)} were read. "
+                f"{stated_total - len(records)} may be missing — double-check before saving, "
+                f"and re-run if needed."
+            )
+            print(f"OCR count mismatch for week '{clean_week_date}': stated {stated_total}, got {len(records)}")
 
         cursor.execute("SELECT name FROM contractors")
         existing = [row["name"].lower() for row in cursor.fetchall()]
@@ -489,13 +531,15 @@ async def upload_weekly_image(file: UploadFile = File(...), week_date: str = For
             return JSONResponse({
                 "status": "approval_required", "week_date": clean_week_date, "overwrite": overwrite,
                 "unknown_contractors": unknown, "existing_contractors": sorted(existing), "records": records,
+                "stated_total": stated_total, "count_warning": count_warning,
             })
 
         if overwrite:
             cursor.execute("DELETE FROM weekly_ledgers WHERE week_date = %s", (clean_week_date,))
         insert_week_rows(cursor, clean_week_date, records)
         conn.commit()
-        return JSONResponse({"status": "success", "extracted_count": len(records), "week_date": clean_week_date})
+        return JSONResponse({"status": "success", "extracted_count": len(records), "week_date": clean_week_date,
+                             "stated_total": stated_total, "count_warning": count_warning})
     finally:
         if conn:
             conn.close()
