@@ -201,13 +201,17 @@ tr.paid td .name{color:var(--text)}
       </div>
       <div class="card" x-show="isAdmin">
         <h2>Import a week</h2>
+        <div class="tabs" style="margin-bottom:12px">
+          <button :class="{on:upload.mode==='image'}" @click="setUploadMode('image')">Screenshot</button>
+          <button :class="{on:upload.mode==='data'}" @click="setUploadMode('data')">CSV / JSON</button>
+        </div>
         <div class="field">
           <label>Week (Monday–Sunday)</label>
           <input type="date" x-model="upload.pickedDate" @change="onPickWeek()" @mouseenter="openCalendar($event)">
           <div class="hint" x-show="upload.weekDate">Saved as <strong x-text="upload.weekDate" style="color:var(--text)"></strong></div>
           <div class="hint" x-show="!upload.weekDate">Pick any day and it snaps to that Monday–Sunday week.</div>
         </div>
-        <div class="field">
+        <div class="field" x-show="upload.mode==='image'">
           <label>Ledger screenshot</label>
           <div class="drop" :class="{over:upload.dragOver}" @dragover.prevent="upload.dragOver=true" @dragleave.prevent="upload.dragOver=false" @drop.prevent="handleDrop($event)" @click="$refs.fileInput.click()">
             <template x-if="upload.previewSrc"><img :src="upload.previewSrc" alt=""></template>
@@ -215,8 +219,16 @@ tr.paid td .name{color:var(--text)}
             <input type="file" x-ref="fileInput" accept="image/*" style="display:none" @change="handleFileSelect($event)">
           </div>
         </div>
+        <div class="field" x-show="upload.mode==='data'">
+          <label>CSV or JSON file</label>
+          <div class="drop" :class="{over:upload.dragOver}" @dragover.prevent="upload.dragOver=true" @dragleave.prevent="upload.dragOver=false" @drop.prevent="handleDrop($event)" @click="$refs.dataInput.click()">
+            <div x-text="upload.fileName || 'Drop a .csv or .json here or click to choose'"></div>
+            <input type="file" x-ref="dataInput" accept=".csv,.tsv,.json,text/csv,application/json" style="display:none" @change="handleFileSelect($event)">
+          </div>
+          <div class="hint">Needs a <b>contractor</b> (or name) column and a <b>profits</b> (or amount) column. Exact — no OCR, nothing dropped. Other columns are ignored.</div>
+        </div>
         <label class="check field"><input type="checkbox" x-model="upload.overwrite"> Replace existing week</label>
-        <button class="btn primary block" :disabled="upload.busy||!upload.file||!upload.weekDate" @click="submitUpload()" x-text="upload.busy?'Reading image…':'Import week'"></button>
+        <button class="btn primary block" :disabled="upload.busy||!upload.file||!upload.weekDate" @click="submitUpload()" x-text="upload.busy?(upload.mode==='image'?'Reading image…':'Reading file…'):'Import week'"></button>
       </div>
 
       <div class="card">
@@ -706,7 +718,7 @@ function app(){
 
     selectedIds:[], filters:{search:'',status:'all',team:''}, sortKey:'contractor', sortDir:'asc', toasts:[],
     isAdmin:false, adminToken:'', adminModal:{open:false,password:'',busy:false},
-    upload:{pickedDate:'',weekDate:'',overwrite:false,file:null,fileName:'',previewSrc:null,dragOver:false,busy:false},
+    upload:{mode:'image',pickedDate:'',weekDate:'',overwrite:false,file:null,fileName:'',previewSrc:null,dragOver:false,busy:false},
     pay:{open:false,tab:'crypto'},
     crypto:{symbol:'BTC',txInput:'',busy:false},
     manual:{method:'CASHAPP',amount:'',notes:'',busy:false,bankExcess:false},
@@ -831,16 +843,28 @@ function app(){
       this.upload.weekDate = mon.getMonth()===sun.getMonth() ? `${f(mon)} - ${sun.getDate()}, ${sun.getFullYear()}` : `${f(mon)} - ${f(sun,true)}`;
     },
 
+    setUploadMode(m){ this.upload.mode=m; this.upload.file=null; this.upload.fileName=''; this.upload.previewSrc=null; },
     handleFileSelect(e){ this.setUploadFile(e.target.files[0]); },
     handleDrop(e){ this.upload.dragOver=false; const f=e.dataTransfer.files[0]; if(f) this.setUploadFile(f); },
-    setUploadFile(f){ if(!f||!f.type.startsWith('image/')){ this.notify('Choose an image file.','error'); return; }
-      this.upload.file=f; this.upload.fileName=f.name; const r=new FileReader(); r.onload=ev=>{this.upload.previewSrc=ev.target.result}; r.readAsDataURL(f); },
+    setUploadFile(f){
+      if(!f) return;
+      if(this.upload.mode==='image'){
+        if(!f.type.startsWith('image/')){ this.notify('Choose an image file.','error'); return; }
+        this.upload.file=f; this.upload.fileName=f.name;
+        const r=new FileReader(); r.onload=ev=>{this.upload.previewSrc=ev.target.result}; r.readAsDataURL(f);
+      } else {
+        const ok=/\.(csv|tsv|json)$/i.test(f.name)||['text/csv','application/json'].includes(f.type);
+        if(!ok){ this.notify('Choose a .csv or .json file.','error'); return; }
+        this.upload.file=f; this.upload.fileName=f.name; this.upload.previewSrc=null;
+      }
+    },
     resetUpload(){ this.upload={...this.upload,file:null,fileName:'',previewSrc:null,pickedDate:'',weekDate:'',overwrite:false}; },
     async submitUpload(){
       const fd=new FormData(); fd.append('file',this.upload.file); fd.append('week_date',this.upload.weekDate.trim()); fd.append('overwrite',this.upload.overwrite);
+      const endpoint=this.upload.mode==='image'?'/api/upload':'/api/upload-data';
       this.upload.busy=true;
       try{ const upHeaders={}; if(this.adminToken) upHeaders['X-Admin-Token']=this.adminToken;
-        const res=await this.fetchWithTimeout('/api/upload',{method:'POST',body:fd,headers:upHeaders},120000); const d=await res.json();
+        const res=await this.fetchWithTimeout(endpoint,{method:'POST',body:fd,headers:upHeaders},120000); const d=await res.json();
         if(res.ok&&d.status==='success'){ if(d.count_warning) this.notify(d.count_warning,'error'); this.notify(`Imported ${d.extracted_count} rows.`,'success'); if(!this.weeks.includes(d.week_date)) this.weeks.unshift(d.week_date); await this.loadWeek(d.week_date); this.resetUpload(); }
         else if(d.status==='approval_required'){ this.approval={open:true,weekDate:d.week_date,overwrite:d.overwrite,records:d.records,unknown:d.unknown_contractors,existing:d.existing_contractors,mappings:{},countWarning:d.count_warning,statedTotal:d.stated_total}; if(d.count_warning) this.notify(d.count_warning,'error'); }
         else this.notify(d.message||"Couldn't read that image.",'error');
