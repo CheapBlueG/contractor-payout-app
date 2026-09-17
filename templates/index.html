@@ -510,7 +510,8 @@ tr.paid td .name{color:var(--text)}
 <div class="overlay" x-show="approval.open" x-cloak>
   <div class="modal">
     <div class="mhead"><h3>New names in this screenshot</h3><button class="x" @click="approval.open=false">✕</button></div>
-    <p style="color:var(--muted);margin:0 0 12px">These names aren't in your contractor list yet. Map any typos to an existing contractor, or keep them to add as new.</p>
+    <div x-show="approval.countWarning" style="background:var(--red-dim);border:1px solid rgba(242,107,107,.5);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px" x-text="approval.countWarning"></div>
+    <p style="color:var(--muted);margin:0 0 12px">Reading <b x-text="approval.records.length"></b><span x-show="approval.statedTotal"> of <b x-text="approval.statedTotal"></b></span> rows. These names aren't in your contractor list yet — map any typos to an existing contractor, or keep them to add as new.</p>
     <template x-for="u in approval.unknown" :key="u">
       <div class="row2" style="margin-bottom:8px">
         <div style="display:flex;align-items:center" x-text="u"></div>
@@ -714,7 +715,7 @@ function app(){
     mismatch:{open:false,busy:false,kind:'crypto',ledgerIds:[],txInput:'',symbol:'',method:'',amount:0,totalOwed:0,receivedUsd:0,difference:0,note:'',bankExcess:true,singleContractor:false},
     details:{open:false,item:null},
     advance:{open:false,source:'',amount:'',note:'',busy:false},
-    approval:{open:false,weekDate:'',overwrite:false,records:[],unknown:[],existing:[],mappings:{}},
+    approval:{open:false,weekDate:'',overwrite:false,records:[],unknown:[],existing:[],mappings:{},countWarning:null,statedTotal:null},
     teamModal:{open:false,name:'',members:[]}, teamsModal:{open:false}, contractorModal:{open:false},
     history:{open:false,loading:false,id:null,name:'',totalOwed:0,totalPaid:0,creditBalance:0,isWaived:false,rows:[],credits:[],advanceAmount:'',advanceNote:''},
 
@@ -840,8 +841,8 @@ function app(){
       this.upload.busy=true;
       try{ const upHeaders={}; if(this.adminToken) upHeaders['X-Admin-Token']=this.adminToken;
         const res=await this.fetchWithTimeout('/api/upload',{method:'POST',body:fd,headers:upHeaders},120000); const d=await res.json();
-        if(res.ok&&d.status==='success'){ this.notify(`Imported ${d.extracted_count} rows.`,'success'); if(!this.weeks.includes(d.week_date)) this.weeks.unshift(d.week_date); await this.loadWeek(d.week_date); this.resetUpload(); }
-        else if(d.status==='approval_required'){ this.approval={open:true,weekDate:d.week_date,overwrite:d.overwrite,records:d.records,unknown:d.unknown_contractors,existing:d.existing_contractors,mappings:{}}; }
+        if(res.ok&&d.status==='success'){ if(d.count_warning) this.notify(d.count_warning,'error'); this.notify(`Imported ${d.extracted_count} rows.`,'success'); if(!this.weeks.includes(d.week_date)) this.weeks.unshift(d.week_date); await this.loadWeek(d.week_date); this.resetUpload(); }
+        else if(d.status==='approval_required'){ this.approval={open:true,weekDate:d.week_date,overwrite:d.overwrite,records:d.records,unknown:d.unknown_contractors,existing:d.existing_contractors,mappings:{},countWarning:d.count_warning,statedTotal:d.stated_total}; if(d.count_warning) this.notify(d.count_warning,'error'); }
         else this.notify(d.message||"Couldn't read that image.",'error');
       }catch(e){ this.notify(e.name==='AbortError'?'Import timed out. Try again.':'Network error during import.','error'); }
       finally{ this.upload.busy=false; }
