@@ -421,6 +421,103 @@ async def live_price(symbol: str):
 # Upload / OCR ingestion
 # --------------------------------------------------------------------------
 
+def parse_structured_records(filename: str, raw_bytes: bytes):
+    """Parses an uploaded CSV or JSON file into [{contractor, profits}].
+    Accepts common shapes so people don't have to format things precisely:
+      - CSV/TSV with a header row; name column matched by header, profits by
+        the 'profits' header (falling back to a 'revenue'/'amount' column).
+      - JSON: a list of objects, or {"records": [...]}, with name under any
+        of contractor/name/contractor_name and amount under profits/amount/
+        owed. Raises ValueError with a clear message on anything unusable."""
+    text = raw_bytes.decode("utf-8-sig", errors="replace").strip()
+    if not text:
+        raise ValueError("The file is empty.")
+
+    lower = filename.lower()
+    name_keys = ("contractor", "name", "contractor_name", "contractorname")
+    amount_keys = ("profits", "profit", "amount", "amount_owed", "owed", "pay", "payout")
+
+    def pick(d, keys):
+        norm = {str(k).strip().lower(): v for k, v in d.items()}
+        for k in keys:
+            if k in norm and str(norm[k]).strip() != "":
+                return norm[k]
+        return None
+
+    def to_amount(v):
+        s = str(v).strip().replace("$", "").replace(",", "")
+        if s in ("", "-", "—"):
+            return 0.0
+        return round(float(s), 2)
+
+    rows = []
+    if lower.endswith(".json"):
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"That doesn't look like valid JSON: {e}")
+        if isinstance(data, dict):
+            data = data.get("records") or data.get("rows") or data.get("data") or []
+        if not isinstance(data, list):
+            raise ValueError('JSON must be a list of rows, or {"records": [ ... ]}.')
+        for i, obj in enumerate(data, 1):
+            if not isinstance(obj, dict):
+                raise ValueError(f"Row {i} of the JSON isn't an object.")
+            name = pick(obj, name_keys)
+            amount = pick(obj, amount_keys)
+            if name is None:
+                raise ValueError(f"Row {i} has no contractor name (looked for {', '.join(name_keys)}).")
+            rows.append({"contractor": str(name).strip().lower(), "profits": to_amount(amount)})
+    else:
+        # CSV/TSV. Sniff the delimiter; default to comma.
+        sample = text[:2048]
+        delimiter = "\t" if (sample.count("\t") > sample.count(",")) else ","
+        reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
+        if not reader.fieldnames:
+            raise ValueError("The CSV has no header row.")
+        headers_norm = [h.strip().lower() for h in reader.fieldnames]
+        if not any(h in name_keys for h in headers_norm):
+            raise ValueError(f"Couldn't find a name column. Expected a header like: {', '.join(name_keys)}.")
+        if not any(h in amount_keys for h in headers_norm):
+            raise ValueError(f"Couldn't find a profits column. Expected a header like: {', '.join(amount_keys)}.")
+        for i, obj in enumerate(reader, 1):
+            name = pick(obj, name_keys)
+            if name is None or str(name).strip() == "":
+                continue  # skip blank lines / footer rows
+            amount = pick(obj, amount_keys)
+            try:
+                profit = to_amount(amount)
+            except ValueError:
+                raise ValueError(f"Row {i} ('{name}') has a non-numeric profits value: {amount!r}.")
+            rows.append({"contractor": str(name).strip().lower(), "profits": profit})
+
+    if not rows:
+        raise ValueError("No usable rows were found in the file.")
+    return rows
+
+
+def _ingest_records(cursor, clean_week_date, records, overwrite):
+    """Shared tail of every import path: check for unknown contractor names
+    (returns an approval payload if any), else insert the week. Returns
+    ("approval", payload) or ("done", inserted_count)."""
+    cursor.execute("SELECT name FROM contractors")
+    existing = [row["name"].lower() for row in cursor.fetchall()]
+    unknown = []
+    for r in records:
+        n = str(r["contractor"]).strip().lower()
+        if n not in existing and n not in unknown:
+            unknown.append(n)
+    if unknown:
+        return "approval", {
+            "status": "approval_required", "week_date": clean_week_date, "overwrite": overwrite,
+            "unknown_contractors": unknown, "existing_contractors": sorted(existing), "records": records,
+        }
+    if overwrite:
+        cursor.execute("DELETE FROM weekly_ledgers WHERE week_date = %s", (clean_week_date,))
+    insert_week_rows(cursor, clean_week_date, records)
+    return "done", len(records)
+
+
 def insert_week_rows(cursor, week_date: str, records, mappings=None):
     mappings = mappings or {}
     for r in records:
@@ -540,6 +637,43 @@ async def upload_weekly_image(file: UploadFile = File(...), week_date: str = For
         conn.commit()
         return JSONResponse({"status": "success", "extracted_count": len(records), "week_date": clean_week_date,
                              "stated_total": stated_total, "count_warning": count_warning})
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.post("/api/upload-data")
+async def upload_weekly_data(file: UploadFile = File(...), week_date: str = Form(...), overwrite: bool = Form(False), x_admin_token: str = Header(default="")):
+    """Import a week from a CSV or JSON file — exact, no OCR. Same admin
+    gate, duplicate-week check, unknown-name approval, and waive handling as
+    the image path; only the parsing differs."""
+    denied = require_admin(x_admin_token)
+    if denied:
+        return denied
+    clean_week_date = week_date.strip()
+    conn = None
+    try:
+        conn = get_db()
+        cursor = db_cursor(conn)
+
+        cursor.execute("SELECT COUNT(*) AS cnt FROM weekly_ledgers WHERE week_date = %s", (clean_week_date,))
+        if (cursor.fetchone() or {}).get("cnt", 0) > 0 and not overwrite:
+            return JSONResponse(status_code=400, content={
+                "status": "error",
+                "message": f"'{clean_week_date}' already has data. Tick 'Replace existing week' to overwrite it.",
+            })
+
+        raw = await file.read()
+        try:
+            records = parse_structured_records(file.filename or "", raw)
+        except ValueError as err:
+            return JSONResponse(status_code=400, content={"status": "error", "message": str(err)})
+
+        kind, payload = _ingest_records(cursor, clean_week_date, records, overwrite)
+        if kind == "approval":
+            return JSONResponse(payload)
+        conn.commit()
+        return JSONResponse({"status": "success", "extracted_count": payload, "week_date": clean_week_date})
     finally:
         if conn:
             conn.close()
