@@ -145,6 +145,41 @@ def fetch_ledgers_for_week(cursor, week_date: str):
     return cursor.fetchall()
 
 
+def fetch_outstanding(cursor):
+    """Every unpaid row across ALL weeks, grouped by contractor, so the UI
+    can show a standing alert no matter which week is on screen. net_due is
+    owed minus any advance credit already applied. Oldest week first within
+    each contractor; contractors ordered by who owes the most overall."""
+    cursor.execute("""
+        SELECT l.id, l.week_date, c.id AS contractor_id, c.name AS contractor,
+               l.amount_owed_usd,
+               (l.amount_owed_usd - COALESCE(l.credit_applied_usd, 0)) AS net_due_usd
+        FROM weekly_ledgers l
+        JOIN contractors c ON l.contractor_id = c.id
+        WHERE UPPER(COALESCE(l.status, 'UNPAID')) NOT IN ('PAID', 'MANUALLY_PAID')
+          AND (l.amount_owed_usd - COALESCE(l.credit_applied_usd, 0)) > 0.009
+        ORDER BY c.name ASC, l.id ASC
+    """)
+    by_contractor = {}
+    for r in cursor.fetchall():
+        cid = r["contractor_id"]
+        grp = by_contractor.setdefault(cid, {
+            "contractor_id": cid, "contractor": r["contractor"], "total_due": 0.0, "weeks": []
+        })
+        grp["weeks"].append({
+            "ledger_id": r["id"], "week_date": r["week_date"],
+            "net_due_usd": money(r["net_due_usd"]), "amount_owed_usd": money(r["amount_owed_usd"]),
+        })
+        grp["total_due"] = money(grp["total_due"] + float(r["net_due_usd"]))
+    groups = sorted(by_contractor.values(), key=lambda g: -g["total_due"])
+    return {
+        "groups": groups,
+        "total_due": money(sum(g["total_due"] for g in groups)),
+        "contractor_count": len(groups),
+        "week_count": len({w["week_date"] for g in groups for w in g["weeks"]}),
+    }
+
+
 # --------------------------------------------------------------------------
 # Advance credit helpers
 #
@@ -258,6 +293,7 @@ def team_covers_rows(cursor, team_id: int, ledger_ids) -> bool:
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request, selected_week: str = None):
     ledgers, contractors, weeks, teams = [], [], [], []
+    outstanding = {"groups": [], "total_due": 0.0, "contractor_count": 0, "week_count": 0}
 
     # Each block is independent on purpose: one failing query must never
     # blank out unrelated data (teams, contractors) further down.
@@ -301,6 +337,11 @@ async def index(request: Request, selected_week: str = None):
             contractors = cursor.fetchall()
         except Exception as e:
             print(f"Error fetching contractors: {e}")
+
+        try:
+            outstanding = fetch_outstanding(cursor)
+        except Exception as e:
+            print(f"Error fetching outstanding debts: {e}")
     except Exception as e:
         print(f"Error connecting to database: {e}")
     finally:
@@ -315,9 +356,22 @@ async def index(request: Request, selected_week: str = None):
             "teams_json": safe_json(teams),
             "contractors_json": safe_json(contractors),
             "weeks_json": safe_json(weeks),
+            "outstanding_json": safe_json(outstanding),
             "selected_week": selected_week or "",
         },
     )
+
+
+@app.get("/api/outstanding")
+async def api_outstanding():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = db_cursor(conn)
+        return {"status": "success", "outstanding": fetch_outstanding(cursor)}
+    finally:
+        if conn:
+            conn.close()
 
 
 @app.get("/api/ledgers")
