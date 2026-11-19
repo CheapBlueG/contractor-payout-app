@@ -33,6 +33,23 @@ a{color:var(--blue)}
 .week-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 
 /* Settlement bar — the one loud element */
+/* Standing unpaid alert — always visible, any week */
+.alert{background:var(--red-dim);border:1px solid rgba(242,107,107,.55);border-left:4px solid var(--red);border-radius:12px;padding:14px 18px;margin-bottom:18px}
+.alert-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;cursor:pointer}
+.alert-title{display:flex;align-items:center;gap:10px;font-weight:600;color:#ffb3b3}
+.alert-dot{width:9px;height:9px;border-radius:50%;background:var(--red);box-shadow:0 0 0 0 rgba(242,107,107,.7);animation:pulse 1.8s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(242,107,107,.55)}70%{box-shadow:0 0 0 7px rgba(242,107,107,0)}100%{box-shadow:0 0 0 0 rgba(242,107,107,0)}}
+@media(prefers-reduced-motion:reduce){.alert-dot{animation:none}}
+.alert-total{font-family:var(--mono);color:#ff8f8f}
+.alert-caret{color:#ff8f8f;font-size:12px;transition:transform .2s}
+.alert-caret.open{transform:rotate(90deg)}
+.alert-body{margin-top:12px;display:grid;gap:7px;max-height:280px;overflow-y:auto}
+.alert-row{display:flex;align-items:center;justify-content:space-between;gap:10px;background:rgba(0,0,0,.18);border:1px solid rgba(242,107,107,.25);border-radius:8px;padding:8px 11px}
+.alert-row .who{font-weight:500}
+.alert-row .wk{background:none;border:none;color:#ffb3b3;cursor:pointer;font-size:12px;text-decoration:underline;padding:0;font-family:var(--mono)}
+.alert-row .wk+.wk{margin-left:8px}
+.alert-row .due{font-family:var(--mono);color:#ff8f8f;white-space:nowrap}
+.alert-weeks{display:flex;flex-wrap:wrap;gap:2px 0;align-items:center}
 .settle{background:var(--panel);border:1px solid var(--rule);border-radius:12px;padding:18px 20px;margin-bottom:18px}
 .settle-row{display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap}
 .settle .big{font-family:var(--mono);font-size:28px;font-weight:500;letter-spacing:-.02em}
@@ -176,6 +193,32 @@ tr.paid td .name{color:var(--text)}
       <button class="btn sm" @click="openAdvance()">Advance credit</button>
       <a class="btn sm" x-show="selectedWeek" :href="'/api/export-csv?week_date='+encodeURIComponent(selectedWeek)">Export CSV</a>
       <button class="btn sm danger" x-show="selectedWeek && isAdmin" @click="deleteCurrentWeek()">Delete week</button>
+    </div>
+  </div>
+
+  <div class="alert" x-show="outstanding.contractor_count>0" x-cloak>
+    <div class="alert-head" @click="alertOpen=!alertOpen">
+      <div class="alert-title">
+        <span class="alert-dot"></span>
+        <span x-text="outstanding.contractor_count+' '+(outstanding.contractor_count===1?'worker':'workers')+' still unpaid'"></span>
+        <span class="alert-total" x-text="'· '+fmt(outstanding.total_due)+' across '+outstanding.week_count+' '+(outstanding.week_count===1?'week':'weeks')"></span>
+      </div>
+      <span class="alert-caret" :class="{open:alertOpen}">▶</span>
+    </div>
+    <div class="alert-body" x-show="alertOpen">
+      <template x-for="g in outstanding.groups" :key="g.contractor_id">
+        <div class="alert-row">
+          <div>
+            <button class="who name" @click="openHistory(g.contractor_id,g.contractor)" x-text="g.contractor" style="color:#ffd3d3"></button>
+            <div class="alert-weeks">
+              <template x-for="(w,i) in g.weeks" :key="w.ledger_id">
+                <button class="wk" @click="goToWeek(w.week_date)" x-text="w.week_date+' ('+fmt(w.net_due_usd)+')'"></button>
+              </template>
+            </div>
+          </div>
+          <div class="due" x-text="fmt(g.total_due)"></div>
+        </div>
+      </template>
     </div>
   </div>
 
@@ -714,6 +757,8 @@ function app(){
     teams: safeParseSeed('teams-data',[]).map(t=>({...t,pendingAdd:'',pendingCredit:'',pendingCreditNote:''})),
     contractors: safeParseSeed('contractors-data',[]),
     weeks: safeParseSeed('weeks-data',[]),
+    outstanding: safeParseSeed('outstanding-data',{groups:[],total_due:0,contractor_count:0,week_count:0}),
+    alertOpen:true,
     selectedWeek: (document.getElementById('selected-week-data')?.textContent||'').trim(),
 
     selectedIds:[], filters:{search:'',status:'all',team:''}, sortKey:'contractor', sortDir:'asc', toasts:[],
@@ -832,7 +877,17 @@ function app(){
         if(d.status==='success'){ this.ledgers=d.ledgers; if(d.contractors) this.contractors=d.contractors; if(d.team_balances){ for(const t of this.teams){ if(d.team_balances[t.id]!=null) t.credit_balance=d.team_balances[t.id]; } } this.selectedWeek=d.week_date||week; this.selectedIds=[]; history.replaceState(null,'',`/?selected_week=${encodeURIComponent(this.selectedWeek)}`); }
       }catch(e){ this.notify("Couldn't load that week.",'error'); }
     },
-    async refreshLedgers(){ await this.loadWeek(this.selectedWeek); },
+    async refreshLedgers(){ await this.loadWeek(this.selectedWeek); await this.refreshOutstanding(); },
+    async refreshOutstanding(){
+      try{ const res=await fetch('/api/outstanding'); const d=await res.json();
+        if(d.status==='success') this.outstanding=d.outstanding;
+      }catch(e){ /* non-critical; the banner just keeps its last state */ }
+    },
+    async goToWeek(week){
+      if(week!==this.selectedWeek) await this.loadWeek(week);
+      // Nudge the eye to the table so it's clear where we jumped to.
+      try{ document.querySelector('.tablewrap')?.scrollIntoView({behavior:'smooth',block:'start'}); }catch(_){}
+    },
 
     openCalendar(e){ try{ if(e.target.showPicker) e.target.showPicker(); }catch(_){} },
     onPickWeek(){
@@ -865,7 +920,7 @@ function app(){
       this.upload.busy=true;
       try{ const upHeaders={}; if(this.adminToken) upHeaders['X-Admin-Token']=this.adminToken;
         const res=await this.fetchWithTimeout(endpoint,{method:'POST',body:fd,headers:upHeaders},120000); const d=await res.json();
-        if(res.ok&&d.status==='success'){ if(d.count_warning) this.notify(d.count_warning,'error'); this.notify(`Imported ${d.extracted_count} rows.`,'success'); if(!this.weeks.includes(d.week_date)) this.weeks.unshift(d.week_date); await this.loadWeek(d.week_date); this.resetUpload(); }
+        if(res.ok&&d.status==='success'){ if(d.count_warning) this.notify(d.count_warning,'error'); this.notify(`Imported ${d.extracted_count} rows.`,'success'); if(!this.weeks.includes(d.week_date)) this.weeks.unshift(d.week_date); await this.loadWeek(d.week_date); await this.refreshOutstanding(); this.resetUpload(); }
         else if(d.status==='approval_required'){ this.approval={open:true,weekDate:d.week_date,overwrite:d.overwrite,records:d.records,unknown:d.unknown_contractors,existing:d.existing_contractors,mappings:{},countWarning:d.count_warning,statedTotal:d.stated_total}; if(d.count_warning) this.notify(d.count_warning,'error'); }
         else this.notify(d.message||"Couldn't read that image.",'error');
       }catch(e){ this.notify(e.name==='AbortError'?'Import timed out. Try again.':'Network error during import.','error'); }
@@ -873,7 +928,7 @@ function app(){
     },
     async submitConfirmedUpload(){
       try{ const res=await this.post('/api/confirm-upload',{week_date:this.approval.weekDate,records:this.approval.records,overwrite:this.approval.overwrite,mappings:this.approval.mappings}); const d=await res.json();
-        if(res.ok&&d.status==='success'){ this.approval.open=false; this.notify(`Imported ${d.extracted_count} rows.`,'success'); if(!this.weeks.includes(d.week_date)) this.weeks.unshift(d.week_date); await this.loadWeek(d.week_date); this.resetUpload(); }
+        if(res.ok&&d.status==='success'){ this.approval.open=false; this.notify(`Imported ${d.extracted_count} rows.`,'success'); if(!this.weeks.includes(d.week_date)) this.weeks.unshift(d.week_date); await this.loadWeek(d.week_date); await this.refreshOutstanding(); this.resetUpload(); }
         else this.notify(d.message||'Import failed.','error');
       }catch(e){ this.notify('Network error.','error'); }
     },
@@ -968,7 +1023,7 @@ function app(){
     async deleteCurrentWeek(){
       if(!this.selectedWeek||!confirm(`Delete every row for "${this.selectedWeek}"? This can't be undone.`)) return;
       try{ const res=await this.post('/api/delete-week',{week_date:this.selectedWeek}); const d=await res.json();
-        if(res.ok&&d.status==='success'){ this.notify(`Deleted ${d.deleted_rows} rows.`,'success'); this.weeks=this.weeks.filter(w=>w!==this.selectedWeek); const nx=this.weeks[0]||''; this.selectedWeek=nx; if(nx) await this.loadWeek(nx); else this.ledgers=[]; }
+        if(res.ok&&d.status==='success'){ this.notify(`Deleted ${d.deleted_rows} rows.`,'success'); this.weeks=this.weeks.filter(w=>w!==this.selectedWeek); const nx=this.weeks[0]||''; this.selectedWeek=nx; if(nx) await this.loadWeek(nx); else this.ledgers=[]; await this.refreshOutstanding(); }
         else this.notify(d.message||'Delete failed.','error');
       }catch(e){ this.notify('Network error.','error'); }
     },
@@ -1004,7 +1059,7 @@ function app(){
     },
     async deleteContractor(id,name){ if(!confirm(`Delete "${name}" and all their ledger history? This can't be undone.`)) return;
       try{ const res=await this.post('/api/delete-contractor',{contractor_id:id});
-        if(res.ok){ this.contractors=this.contractors.filter(c=>c.id!==id); this.ledgers=this.ledgers.filter(r=>r.contractor_id!==id); this.notify('Contractor deleted.','success'); } else this.notify("Couldn't delete.",'error');
+        if(res.ok){ this.contractors=this.contractors.filter(c=>c.id!==id); this.ledgers=this.ledgers.filter(r=>r.contractor_id!==id); this.notify('Contractor deleted.','success'); await this.refreshOutstanding(); } else this.notify("Couldn't delete.",'error');
       }catch(e){ this.notify('Network error.','error'); } },
     async openHistory(id,name){
       this.history={...this.history,open:true,loading:true,id,name,rows:[],credits:[]};
@@ -1021,6 +1076,7 @@ function app(){
 <script type="application/json" id="teams-data">{{ teams_json | safe }}</script>
 <script type="application/json" id="contractors-data">{{ contractors_json | safe }}</script>
 <script type="application/json" id="weeks-data">{{ weeks_json | safe }}</script>
+<script type="application/json" id="outstanding-data">{{ outstanding_json | safe }}</script>
 <div id="selected-week-data" style="display:none">{{ selected_week }}</div>
 </body>
 </html>
